@@ -1,0 +1,1784 @@
+{
+  "imports": [
+    "github.com/project-flogo/flow",
+    "github.com/project-flogo/contrib/activity/noop",
+    "github.com/project-flogo/flow/activity/subflow",
+    "github.com/tibco/flogo-ai-agent/src/app/AgenticAI/activity/chunkandembeddocuments",
+    "github.com/tibco/flogo-activespaces/src/app/ActiveSpaces/activity/vectorsearch",
+    "github.com/tibco/flogo-general/src/app/General/activity/mapper",
+    "github.com/project-flogo/contrib/activity/actreturn",
+    "github.com/tibco/flogo-general/src/app/General/activity/parsejson",
+    "github.com/tibco/flogo-ems/src/app/EMS/activity/acknowledge",
+    "github.com/tibco/flogo-ems/src/app/EMS/activity/sendmessage",
+    "github.com/tibco/flogo-general/src/app/General/activity/log",
+    "github.com/tibco/flogo-activespaces/src/app/ActiveSpaces/activity/vectorupsert",
+    "github.com/tibco/flogo-ems/src/app/EMS/trigger/receivemessage",
+    "github.com/tibco/flogo-mcp/src/app/MCP/trigger/mcpserver",
+    "github.com/tibco/flogo-general/src/app/General/trigger/rest",
+    "github.com/project-flogo/contrib/function/string",
+    "github.com/project-flogo/contrib/function/array",
+    "github.com/project-flogo/contrib/function/coerce",
+    "github.com/tibco/flogo-activespaces/src/app/ActiveSpaces/connector/as",
+    "github.com/tibco/flogo-ems/src/app/EMS/connector/ems"
+  ],
+  "name": "RAGdemo",
+  "description": "RAGdemo (without azure starter)",
+  "version": "1.0.1",
+  "type": "flogo:app",
+  "appModel": "1.1.1",
+  "tags": [],
+  "triggers": [
+    {
+      "ref": "#receivemessage",
+      "name": "receivemessage",
+      "description": "This trigger receives messages from the EMS destination",
+      "settings": {
+        "connection": "conn://e7a79509-003b-45c6-acb2-2816db8c4029"
+      },
+      "id": "ReceiveEMSMessage",
+      "handlers": [
+        {
+          "description": "Main flow to ingest new/changed document triggerd by notification on EMS topic",
+          "settings": {
+            "processingMode": "Sync",
+            "destinationType": "=$property[\"EMS.DOCUMENTTRIGGER.DESTINATIONTYPE\"]",
+            "destination": "=$property[\"EMS.DOCUMENTTRIGGER.DESTINATION\"]",
+            "durableSubscriber": false,
+            "sharedDurableSubscriber": false,
+            "subscriptionName": "",
+            "ackMode": "Auto",
+            "messageSelector": "",
+            "enableFlowLimit": false,
+            "maxConcurrentMessages": 200
+          },
+          "action": {
+            "ref": "github.com/project-flogo/flow",
+            "settings": {
+              "flowURI": "res://flow:EMS-Document-Trigger"
+            },
+            "input": {
+              "message": "=$.message",
+              "headers": "=$.headers",
+              "messageProperties": "=$.messageProperties"
+            }
+          },
+          "schemas": {
+            "output": {
+              "headers": {
+                "type": "json",
+                "value": "{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"type\":\"object\",\"properties\":{\"destination\":{\"type\":\"string\"},\"replyTo\":{\"type\":\"string\"},\"deliveryMode\":{\"type\":\"string\"},\"messageID\":{\"type\":\"string\"},\"timestamp\":{\"type\":\"integer\"},\"expiration\":{\"type\":\"integer\"},\"reDelivered\":{\"type\":\"boolean\"},\"priority\":{\"type\":\"integer\"},\"correlationID\":{\"type\":\"string\"}}}",
+                "fe_metadata": "{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"type\":\"object\",\"properties\":{\"destination\":{\"type\":\"string\"},\"replyTo\":{\"type\":\"string\"},\"deliveryMode\":{\"type\":\"string\"},\"messageID\":{\"type\":\"string\"},\"timestamp\":{\"type\":\"integer\"},\"expiration\":{\"type\":\"integer\"},\"reDelivered\":{\"type\":\"boolean\"},\"priority\":{\"type\":\"integer\"},\"correlationID\":{\"type\":\"string\"}}}"
+              },
+              "messageProperties": {
+                "type": "json",
+                "value": "{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"type\":\"object\",\"properties\":{\"property\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"},\"value\":{\"type\":\"string\"},\"type\":{\"type\":\"string\"}},\"required\":[\"name\",\"value\"]}}}}",
+                "fe_metadata": "{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"type\":\"object\",\"properties\":{\"property\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"},\"value\":{\"type\":\"string\"},\"type\":{\"type\":\"string\"}},\"required\":[\"name\",\"value\"]}}}}"
+              }
+            }
+          },
+          "name": "EMS-Document-Trigger"
+        }
+      ]
+    },
+    {
+      "ref": "#mcpserver",
+      "name": "flogo-mcp-mcpsever",
+      "description": "Flogo MCP server for Agentic AI",
+      "settings": {
+        "serverName": "RAGDemo",
+        "serverVersion": "1.0.0",
+        "serverType": "HTTP",
+        "serverPort": "=$property[\"MCPSERVER.HTTP-PORT\"]",
+        "statelessServer": false,
+        "serverEndpointPath": "/mcp",
+        "enableTLS": false,
+        "serverCertificate": "",
+        "serverPrivateKey": "",
+        "authType": "None",
+        "authToken": "",
+        "oauthIssuer": "",
+        "oauthJWKSURL": "",
+        "oauthAudience": "",
+        "oauthAuthorizationServers": "",
+        "oauthRequiredScopes": "",
+        "oauthResourceURL": ""
+      },
+      "id": "MCPServer",
+      "handlers": [
+        {
+          "description": "MCP Server to access AS VectorStore",
+          "settings": {
+            "handlerType": "Tool",
+            "resourceUri": "",
+            "handlerName": "RAGDemo",
+            "handlerDescription": "Search the indexed document collection using semantic similarity. Use this tool when the user asks a question that may be answered from the indexed documents. The query should be a natural-language description of the information being sought. Results include the relevant document passages and metadata. Use filters when the user specifies a product, version, document type, etc.",
+            "toolTitle": "DocumentRAG",
+            "readOnlyToolHint": false,
+            "destructiveToolHint": false,
+            "idempotentToolHint": false,
+            "openWorldToolHint": true,
+            "scope": ""
+          },
+          "action": {
+            "ref": "github.com/project-flogo/flow",
+            "settings": {
+              "flowURI": "res://flow:MCPServerVectorStore"
+            },
+            "input": {
+              "arguments": "=$.arguments"
+            },
+            "output": {
+              "response": "=$.response"
+            }
+          },
+          "reply": {
+            "outputSchema": ""
+          },
+          "schemas": {
+            "reply": {
+              "response": {
+                "type": "json",
+                "value": "{\r\n  \"type\": \"object\",\r\n  \"properties\": {\r\n    \"data\": {\r\n      \"type\": \"string\"\r\n    },\r\n    \"audience\": {\r\n      \"type\": \"array\",\r\n      \"items\": {\r\n        \"type\": \"string\"\r\n      }\r\n    },\r\n    \"priority\": {\r\n      \"type\": \"number\"\r\n    },\r\n    \"error\": {\r\n      \"type\": \"string\"\r\n    }\r\n  }\r\n}",
+                "fe_metadata": "{\r\n  \"type\": \"object\",\r\n  \"properties\": {\r\n    \"data\": {\r\n      \"type\": \"string\"\r\n    },\r\n    \"audience\": {\r\n      \"type\": \"array\",\r\n      \"items\": {\r\n        \"type\": \"string\"\r\n      }\r\n    },\r\n    \"priority\": {\r\n      \"type\": \"number\"\r\n    },\r\n    \"error\": {\r\n      \"type\": \"string\"\r\n    }\r\n  }\r\n}"
+              }
+            },
+            "output": {
+              "arguments": {
+                "type": "json",
+                "value": "{\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"type\": \"object\",\n  \"properties\": {\n    \"querytext\": {\n      \"type\": \"string\",\n      \"description\": \"Query to use to retrieve RAG data\"\n    }\n  },\n  \"required\": [\n    \"querytext\"\n  ],\n  \"additionalProperties\": false\n}",
+                "fe_metadata": "{\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"type\": \"object\",\n  \"properties\": {\n    \"querytext\": {\n      \"type\": \"string\",\n      \"description\": \"Query to use to retrieve RAG data\"\n    }\n  },\n  \"required\": [\n    \"querytext\"\n  ],\n  \"additionalProperties\": false\n}"
+              }
+            }
+          },
+          "name": "MCPServerVectorStore"
+        }
+      ]
+    },
+    {
+      "ref": "#rest",
+      "name": "tibco-wi-rest",
+      "description": "Simple REST Trigger",
+      "settings": {
+        "port": 19091,
+        "APISpecUpdate": true,
+        "swagger": "spec://02661cb4",
+        "swaggerVersion": "v2",
+        "authenticationType": "None",
+        "username": "",
+        "password": "",
+        "apiVersion": "1.0.0",
+        "secureConnection": false,
+        "serverKey": "",
+        "caCertificate": ""
+      },
+      "id": "ReceiveHTTPMessage",
+      "handlers": [
+        {
+          "description": "DEV Tool to manually publish new/changed file notification on EMS",
+          "settings": {
+            "APISpecPath": "/fetch-file",
+            "Method": "POST",
+            "reqType": "application/json",
+            "Path": "/fetch-file",
+            "OutputValidation": false
+          },
+          "action": {
+            "ref": "github.com/project-flogo/flow",
+            "settings": {
+              "flowURI": "res://flow:PublishFileTriggerMessage"
+            },
+            "input": {
+              "body": "=$.body",
+              "headers": "=$.headers"
+            },
+            "output": {
+              "code": "=$.code",
+              "message": "=$.message"
+            }
+          },
+          "reply": {
+            "code": 200,
+            "configureResponseCodes": false,
+            "message": {}
+          },
+          "schemas": {
+            "reply": {
+              "responseBody": {
+                "type": "json",
+                "value": "{\"type\":\"object\",\"properties\":{\"body\":{\"type\":\"any\"},\"headers\":{\"type\":\"object\"}}}",
+                "fe_metadata": "{\"type\":\"object\",\"properties\":{\"body\":{\"type\":\"any\"},\"headers\":{\"type\":\"object\"}}}"
+              },
+              "responseCodesSchema": {
+                "type": "json",
+                "value": "{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"code\":{\"type\":\"number\"},\"responseType\":{\"type\":\"string\"}},\"required\":[\"code\",\"responseType\"]}}",
+                "fe_metadata": "[{\"code\":200,\"responseType\":\"string\"},{\"code\":400,\"responseType\":\"string\"}]"
+              }
+            },
+            "output": {
+              "headers": {
+                "type": "json",
+                "value": "{\"type\":\"object\",\"properties\":{\"Accept\":{\"type\":\"string\",\"visible\":false},\"Accept-Charset\":{\"type\":\"string\",\"visible\":false},\"Accept-Encoding\":{\"type\":\"string\",\"visible\":false},\"Authorization\":{\"type\":\"string\",\"visible\":false},\"Connection\":{\"type\":\"string\",\"visible\":false},\"Content-Length\":{\"type\":\"string\",\"visible\":false},\"Content-Type\":{\"type\":\"string\",\"visible\":false},\"Cookie\":{\"type\":\"string\",\"visible\":false},\"Pragma\":{\"type\":\"string\",\"visible\":false}},\"required\":[]}",
+                "fe_metadata": "[{\"parameterName\":\"Accept\",\"type\":\"string\",\"repeating\":\"false\",\"required\":\"false\",\"visible\":false},{\"parameterName\":\"Accept-Charset\",\"type\":\"string\",\"repeating\":\"false\",\"required\":\"false\",\"visible\":false},{\"parameterName\":\"Accept-Encoding\",\"type\":\"string\",\"repeating\":\"false\",\"required\":\"false\",\"visible\":false},{\"parameterName\":\"Authorization\",\"type\":\"string\",\"repeating\":\"false\",\"required\":\"false\",\"visible\":false},{\"parameterName\":\"Connection\",\"type\":\"string\",\"repeating\":\"false\",\"required\":\"false\",\"visible\":false},{\"parameterName\":\"Content-Length\",\"type\":\"string\",\"repeating\":\"false\",\"required\":\"false\",\"visible\":false},{\"parameterName\":\"Content-Type\",\"type\":\"string\",\"repeating\":\"false\",\"required\":\"false\",\"visible\":false},{\"parameterName\":\"Cookie\",\"type\":\"string\",\"repeating\":\"false\",\"required\":\"false\",\"visible\":false},{\"parameterName\":\"Pragma\",\"type\":\"string\",\"repeating\":\"false\",\"required\":\"false\",\"visible\":false}]"
+              },
+              "body": {
+                "type": "json",
+                "value": "{\"type\":\"object\",\"required\":[\"createdTime\",\"eventType\",\"fileId\",\"fileLink\",\"fileName\",\"filePath\",\"modifiedTime\"],\"properties\":{\"createdTime\":{\"type\":\"string\",\"format\":\"date-time\",\"description\":\"Timestamp when the file was created\"},\"eventType\":{\"type\":\"string\",\"enum\":[\"CREATED\",\"MODIFIED\"],\"description\":\"Type of event that triggered the payload\"},\"fileId\":{\"type\":\"integer\",\"description\":\"The internal item ID of the file in SharePoint\"},\"fileLink\":{\"type\":\"string\",\"format\":\"uri\",\"description\":\"Direct web link to access the file\"},\"fileName\":{\"type\":\"string\",\"description\":\"The name with extension of the file (e.g., Document.docx)\"},\"filePath\":{\"type\":\"string\",\"description\":\"The full path of the file in SharePoint\"},\"modifiedTime\":{\"type\":\"string\",\"format\":\"date-time\",\"description\":\"Timestamp when the file was last modified\"}}}",
+                "fe_metadata": "{\"type\":\"object\",\"required\":[\"createdTime\",\"eventType\",\"fileId\",\"fileLink\",\"fileName\",\"filePath\",\"modifiedTime\"],\"properties\":{\"createdTime\":{\"type\":\"string\",\"format\":\"date-time\",\"description\":\"Timestamp when the file was created\"},\"eventType\":{\"type\":\"string\",\"enum\":[\"CREATED\",\"MODIFIED\"],\"description\":\"Type of event that triggered the payload\"},\"fileId\":{\"type\":\"integer\",\"description\":\"The internal item ID of the file in SharePoint\"},\"fileLink\":{\"type\":\"string\",\"format\":\"uri\",\"description\":\"Direct web link to access the file\"},\"fileName\":{\"type\":\"string\",\"description\":\"The name with extension of the file (e.g., Document.docx)\"},\"filePath\":{\"type\":\"string\",\"description\":\"The full path of the file in SharePoint\"},\"modifiedTime\":{\"type\":\"string\",\"format\":\"date-time\",\"description\":\"Timestamp when the file was last modified\"}}}"
+              },
+              "multipartFormData": {
+                "type": "json",
+                "value": "{\"type\":\"object\",\"properties\":{}}",
+                "fe_metadata": "{\"type\":\"object\",\"properties\":{}}"
+              },
+              "multipartForm": {
+                "type": "json",
+                "value": "{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"type\":\"array\",\"items\":{}}",
+                "fe_metadata": "[]"
+              }
+            }
+          },
+          "name": "PublishFileTriggerMessage"
+        }
+      ]
+    }
+  ],
+  "resources": [
+    {
+      "id": "flow:MCPServerVectorStore",
+      "data": {
+        "name": "MCPServerVectorStore",
+        "description": "MCP Server to access AS VectorStore",
+        "links": [
+          {
+            "id": 1,
+            "from": "StartActivity",
+            "to": "LogStart",
+            "type": "label",
+            "label": "StartActivity to LogStart"
+          },
+          {
+            "id": 2,
+            "from": "LogStart",
+            "to": "ChunkAndEmbedDocuments_Preview",
+            "type": "label",
+            "label": "LogStart to ChunkAndEmbedDocuments_Preview"
+          },
+          {
+            "id": 3,
+            "from": "ChunkAndEmbedDocuments_Preview",
+            "to": "ActiveSpacesVectorSearch",
+            "type": "label",
+            "label": "ChunkAndEmbedDocuments_Preview to ActiveSpacesVectorSearch"
+          },
+          {
+            "id": 4,
+            "from": "ActiveSpacesVectorSearch",
+            "to": "logSearch",
+            "type": "label",
+            "label": "ActiveSpacesVectorSearch to CopyOflog"
+          },
+          {
+            "id": 5,
+            "from": "logSearch",
+            "to": "Mapper",
+            "type": "label",
+            "label": "CopyOflog to Mapper"
+          },
+          {
+            "id": 6,
+            "from": "Mapper",
+            "to": "logMapper",
+            "type": "label",
+            "label": "Mapper to StartaSubFlow"
+          },
+          {
+            "id": 7,
+            "from": "logMapper",
+            "to": "Return",
+            "type": "label",
+            "label": "StartaSubFlow to Return"
+          }
+        ],
+        "tasks": [
+          {
+            "id": "StartActivity",
+            "name": "StartActivity",
+            "description": "NoOp Activity",
+            "activity": {
+              "ref": "#noop"
+            }
+          },
+          {
+            "id": "LogStart",
+            "name": "LogStart",
+            "description": "Simple SubFlow Activity",
+            "settings": {
+              "retryOnError": {
+                "count": 0,
+                "interval": 0
+              }
+            },
+            "activity": {
+              "ref": "#subflow",
+              "settings": {
+                "flowURI": "res://flow:Logger",
+                "detached": false,
+                "execTimeout": 0
+              },
+              "input": {
+                "logMessage": "=string.concat( \"querytext: \",$flow.arguments.querytext)"
+              },
+              "schemas": {
+                "input": {
+                  "input": {
+                    "type": "json",
+                    "value": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"LogProcess\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"logMessage\":{\"type\":\"string\"},\"logLevel\":{\"type\":\"string\"}},\"required\":[\"logMessage\"]}",
+                    "fe_metadata": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"LogProcess\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"logMessage\":{\"type\":\"string\"},\"logLevel\":{\"type\":\"string\"}},\"required\":[\"logMessage\"]}"
+                  }
+                }
+              },
+              "feSchemaMap": {}
+            }
+          },
+          {
+            "id": "ChunkAndEmbedDocuments_Preview",
+            "name": "ChunkAndEmbedDocuments_Preview",
+            "description": "Split text or files into chunks and turn each chunk into an embedding vector. This functionality is in preview stage and not recommended for production use.",
+            "activity": {
+              "ref": "#chunkandembeddocuments",
+              "settings": {
+                "contentSource": "Text",
+                "fileEncoding": "UTF-8",
+                "maxFileSizeMB": 25,
+                "onFileError": "Fail",
+                "chunkingStrategy": "Recursive",
+                "chunkSize": 3200,
+                "chunkOverlap": 1600,
+                "delimiterIsRegex": false,
+                "separators": "\\n\\n,\\n,",
+                "delimiter": "",
+                "markdownHeadingLevel": 2,
+                "minChunkSize": 0,
+                "embeddingProvider": "OpenAI",
+                "embeddingModel": "text-embedding-3-small",
+                "dimensions": "=$property[\"VECTORSTORE.DIMENSIONS\"]",
+                "requestTimeoutSeconds": 60
+              },
+              "input": {
+                "text": "=$flow.arguments.querytext",
+                "documentId": "",
+                "apiKey": "=$property[\"OPENAI.API_KEY\"]",
+                "baseUrl": "=$property[\"OPENAI.BASE_URL\"]"
+              },
+              "schemas": {
+                "output": {
+                  "embeddings": {
+                    "type": "json",
+                    "value": "{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"},\"index\":{\"type\":\"number\"},\"text\":{\"type\":\"string\"},\"source\":{\"type\":\"string\"},\"startOffset\":{\"type\":\"number\"},\"endOffset\":{\"type\":\"number\"},\"charCount\":{\"type\":\"number\"},\"headings\":{\"type\":\"array\",\"items\":{}},\"metadata\":{\"type\":\"object\",\"properties\":{}},\"embedding\":{\"type\":\"array\",\"items\":{}},\"dimensions\":{\"type\":\"number\"}}}}",
+                    "fe_metadata": "[{\r\n  \"id\": \"\",\r\n  \"index\": 0,\r\n  \"text\": \"\",\r\n  \"source\": \"\",\r\n  \"startOffset\": 0,\r\n  \"endOffset\": 0,\r\n  \"charCount\": 0,\r\n  \"headings\": [],\r\n  \"metadata\": {},\r\n  \"embedding\": [],\r\n  \"dimensions\": 0\r\n}]"
+                  },
+                  "skippedFiles": {
+                    "type": "json",
+                    "value": "{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"}}}}",
+                    "fe_metadata": "[{\"path\": \"\", \"reason\": \"\"}]"
+                  }
+                }
+              },
+              "feSchemaMap": {}
+            }
+          },
+          {
+            "id": "ActiveSpacesVectorSearch",
+            "name": "ActiveSpacesVectorSearch",
+            "description": "This activity performs a similarity search against a VECTOR_FLOAT32 column in a TIBCO ActiveSpaces Grid table",
+            "settings": {
+              "retryOnError": {
+                "count": 0,
+                "interval": 0
+              }
+            },
+            "activity": {
+              "ref": "#vectorsearch",
+              "settings": {
+                "asConnection": "conn://399d3330-b60f-46f4-8f8d-1c8b2ed973c6",
+                "tableName": "=$property[\"VECTORSTORE.COLLECTIONNAME\"]",
+                "vectorColumn": "embedding",
+                "similarityFunction": "Cosine"
+              },
+              "input": {
+                "filter": "",
+                "maxResults": 5,
+                "minScore": 0,
+                "queryVector": {
+                  "mapping": {
+                    "@foreach($activity[ChunkAndEmbedDocuments_Preview].embeddings[0].embedding,embedding)": {
+                      "=": "$loop"
+                    }
+                  }
+                }
+              },
+              "schemas": {
+                "output": {
+                  "rows": {
+                    "type": "json",
+                    "value": "{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"content\":{\"type\":\"string\"},\"embedding\":{\"type\":\"array\",\"items\":{\"type\":\"number\"}},\"id\":{\"type\":\"number\"},\"score\":{\"type\":\"number\"}},\"required\":[\"content\",\"embedding\",\"id\",\"score\"]}}",
+                    "fe_metadata": "{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"content\":{\"type\":\"string\"},\"embedding\":{\"type\":\"array\",\"items\":{\"type\":\"number\"}},\"id\":{\"type\":\"number\"},\"score\":{\"type\":\"number\"}},\"required\":[\"content\",\"embedding\",\"id\",\"score\"]}}"
+                  }
+                }
+              },
+              "feSchemaMap": {}
+            }
+          },
+          {
+            "id": "logSearch",
+            "name": "logSearch",
+            "description": "Simple SubFlow Activity",
+            "type": "iterator",
+            "settings": {
+              "iterate": "=$activity[ActiveSpacesVectorSearch].rows",
+              "accumulate": false,
+              "retryOnError": {
+                "count": 0,
+                "interval": 0
+              }
+            },
+            "activity": {
+              "ref": "#subflow",
+              "settings": {
+                "flowURI": "res://flow:Logger",
+                "detached": false,
+                "execTimeout": 0
+              },
+              "input": {
+                "logMessage": "=coerce.toString($iteration[index])"
+              },
+              "schemas": {
+                "input": {
+                  "input": {
+                    "type": "json",
+                    "value": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"LogProcess\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"logMessage\":{\"type\":\"string\"},\"logLevel\":{\"type\":\"string\"}},\"required\":[\"logMessage\"]}",
+                    "fe_metadata": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"LogProcess\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"logMessage\":{\"type\":\"string\"},\"logLevel\":{\"type\":\"string\"}},\"required\":[\"logMessage\"]}"
+                  }
+                }
+              },
+              "feSchemaMap": {}
+            }
+          },
+          {
+            "id": "Mapper",
+            "name": "Mapper",
+            "description": "Mapper Activity",
+            "activity": {
+              "ref": "#mapper",
+              "input": {
+                "input": {
+                  "mapping": {
+                    "@foreach($activity[ActiveSpacesVectorSearch].rows,rows)": {
+                      "content": "=$loop[rows].content",
+                      "id": "=$loop[rows].id",
+                      "score": "=$loop[rows].score"
+                    }
+                  }
+                }
+              },
+              "schemas": {
+                "input": {
+                  "input": {
+                    "type": "json",
+                    "value": "{\n    \"$schema\": \"http://json-schema.org/draft-04/schema#\",\n    \"type\": \"array\",\n    \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n            \"content\": {\n                \"type\": \"string\"\n            },\n           \n            \"id\": {\n                \"type\": \"number\"\n            },\n            \"score\": {\n                \"type\": \"number\"\n            }\n        },\n        \"required\": [\n            \"content\",\n            \"id\",\n            \"score\"\n        ]\n    }\n}",
+                    "fe_metadata": "{\n    \"$schema\": \"http://json-schema.org/draft-04/schema#\",\n    \"type\": \"array\",\n    \"items\": {\n        \"type\": \"object\",\n        \"properties\": {\n            \"content\": {\n                \"type\": \"string\"\n            },\n           \n            \"id\": {\n                \"type\": \"number\"\n            },\n            \"score\": {\n                \"type\": \"number\"\n            }\n        },\n        \"required\": [\n            \"content\",\n            \"id\",\n            \"score\"\n        ]\n    }\n}"
+                  }
+                },
+                "output": {
+                  "output": {
+                    "type": "json",
+                    "value": "{\n  \"$schema\": \"http://json-schema.org/draft-04/schema#\",\n  \"type\": \"array\",\n  \"items\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"content\": {\n        \"type\": \"string\"\n      },\n      \"id\": {\n        \"type\": \"number\"\n      },\n      \"score\": {\n        \"type\": \"number\"\n      }\n    },\n    \"required\": [\n      \"content\",\n      \"id\",\n      \"score\"\n    ]\n  }\n}",
+                    "fe_metadata": "{\n  \"$schema\": \"http://json-schema.org/draft-04/schema#\",\n  \"type\": \"array\",\n  \"items\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"content\": {\n        \"type\": \"string\"\n      },\n      \"id\": {\n        \"type\": \"number\"\n      },\n      \"score\": {\n        \"type\": \"number\"\n      }\n    },\n    \"required\": [\n      \"content\",\n      \"id\",\n      \"score\"\n    ]\n  }\n}"
+                  }
+                }
+              },
+              "feSchemaMap": {}
+            }
+          },
+          {
+            "id": "logMapper",
+            "name": "logMapper",
+            "description": "Simple SubFlow Activity",
+            "settings": {
+              "retryOnError": {
+                "count": 0,
+                "interval": 0
+              }
+            },
+            "activity": {
+              "ref": "#subflow",
+              "settings": {
+                "flowURI": "res://flow:Logger",
+                "detached": false,
+                "execTimeout": 0
+              },
+              "input": {
+                "logMessage": "=string.concat(\"mapper:: \", coerce.toString($activity[Mapper]))"
+              },
+              "schemas": {
+                "input": {
+                  "input": {
+                    "type": "json",
+                    "value": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"LogProcess\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"logMessage\":{\"type\":\"string\"},\"logLevel\":{\"type\":\"string\"}},\"required\":[\"logMessage\"]}",
+                    "fe_metadata": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"LogProcess\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"logMessage\":{\"type\":\"string\"},\"logLevel\":{\"type\":\"string\"}},\"required\":[\"logMessage\"]}"
+                  }
+                }
+              },
+              "feSchemaMap": {}
+            }
+          },
+          {
+            "id": "Return",
+            "name": "Return",
+            "description": "Simple Return Activity",
+            "activity": {
+              "ref": "#actreturn",
+              "settings": {
+                "mappings": {
+                  "structuredContent": "=$activity[Mapper]",
+                  "response": {
+                    "mapping": {
+                      "data": "=coerce.toString($activity[Mapper].output)"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "fe_metadata": "eyJTdGFydEFjdGl2aXR5Ijp7IngiOjEyLCJ5Ijo5Nn0sIkxvZ1N0YXJ0Ijp7IngiOjE4OC4zODQ2MTUzODQ2MTUzNiwieSI6OTAuOTIzMDc2OTIzMDc2OTZ9LCJDaHVua0FuZEVtYmVkRG9jdW1lbnRzX1ByZXZpZXciOnsieCI6NDI2LCJ5Ijo4OX0sIkFjdGl2ZVNwYWNlc1ZlY3RvclNlYXJjaCI6eyJ4Ijo0MjQsInkiOjIxOX0sImxvZ1NlYXJjaCI6eyJ4Ijo2NTAsInkiOjIyNH0sIk1hcHBlciI6eyJ4Ijo0MjYsInkiOjM1OX0sImxvZ01hcHBlciI6eyJ4Ijo2NDMsInkiOjM1OH0sIlJldHVybiI6eyJ4Ijo5NjYsInkiOjM1OX19",
+        "metadata": {
+          "input": [
+            {
+              "name": "arguments",
+              "type": "object",
+              "schema": {
+                "type": "json",
+                "value": "{\"querytext\":{\"type\":\"string\",\"description\":\"Query to use to retrieve RAG data\"}}"
+              }
+            },
+            {
+              "name": "httpHeaders",
+              "type": "params"
+            }
+          ],
+          "output": [
+            {
+              "name": "response",
+              "type": "object",
+              "schema": {
+                "type": "json",
+                "value": "{\"data\":{\"type\":\"string\"},\"audience\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"priority\":{\"type\":\"number\"},\"error\":{\"type\":\"string\"}}"
+              }
+            },
+            {
+              "name": "structuredContent",
+              "type": "object"
+            }
+          ],
+          "fe_metadata": {
+            "input": "{\"type\":\"object\",\"title\":\"MCPServer\",\"properties\":{\"arguments\":{\"$schema\":\"http://json-schema.org/draft-07/schema#\",\"type\":\"object\",\"properties\":{\"querytext\":{\"type\":\"string\",\"description\":\"Query to use to retrieve RAG data\"}},\"required\":[\"querytext\"],\"additionalProperties\":false},\"httpHeaders\":{\"type\":\"params\"}}}",
+            "output": "{\"type\":\"object\",\"title\":\"Inputs\",\"properties\":{\"response\":{\"type\":\"object\",\"properties\":{\"data\":{\"type\":\"string\"},\"audience\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"priority\":{\"type\":\"number\"},\"error\":{\"type\":\"string\"}}},\"structuredContent\":{\"type\":\"object\"}},\"required\":[\"response\"]}"
+          }
+        }
+      }
+    },
+    {
+      "id": "flow:EMS-Document-Trigger",
+      "data": {
+        "note": {
+          "author": {
+            "name": "VS code user",
+            "userId": "vscode"
+          },
+          "content": "This flow can receive a notification with multiple documents and will iterate over each document in the ingestDocument activity. \nSubflow IngestDocumet is invoked for each flow induvidually",
+          "createAt": 1790326638351,
+          "lastUpdatedAt": 1790326638351,
+          "title": "Flow Note"
+        },
+        "name": "EMS-Document-Trigger",
+        "description": "Main flow to ingest new/changed document triggerd by notification on EMS topic",
+        "links": [
+          {
+            "id": 1,
+            "from": "StartActivity",
+            "to": "LogStart",
+            "type": "label",
+            "label": "StartActivity to CopyOfLogParser"
+          },
+          {
+            "id": 2,
+            "from": "LogStart",
+            "to": "ParseJSON",
+            "type": "label",
+            "label": "LogStart to ParseJSON"
+          },
+          {
+            "id": 3,
+            "from": "ParseJSON",
+            "to": "LogParser",
+            "type": "label",
+            "label": "ParseJSON to LogParser"
+          },
+          {
+            "id": 4,
+            "from": "LogParser",
+            "to": "IngestDocument",
+            "type": "label",
+            "label": "LogParser to StartaSubFlow"
+          },
+          {
+            "id": 5,
+            "from": "IngestDocument",
+            "to": "LogIngestionResult",
+            "type": "label",
+            "label": "IngestDocument to CopyOfLogParser"
+          },
+          {
+            "id": 6,
+            "from": "LogIngestionResult",
+            "to": "EMSAcknowledge",
+            "type": "label",
+            "label": "CopyOfLogParser to EMSAcknowledge"
+          },
+          {
+            "id": 7,
+            "from": "EMSAcknowledge",
+            "to": "Return",
+            "type": "label",
+            "label": "EMSAcknowledge to Return"
+          }
+        ],
+        "tasks": [
+          {
+            "id": "StartActivity",
+            "name": "StartActivity",
+            "description": "NoOp Activity",
+            "activity": {
+              "ref": "#noop"
+            }
+          },
+          {
+            "id": "LogStart",
+            "name": "LogStart",
+            "description": "Simple SubFlow Activity",
+            "settings": {
+              "retryOnError": {
+                "count": 0,
+                "interval": 0
+              }
+            },
+            "activity": {
+              "ref": "#subflow",
+              "settings": {
+                "flowURI": "res://flow:Logger",
+                "detached": false,
+                "execTimeout": 0
+              },
+              "input": {
+                "logMessage": "=$flow.message"
+              },
+              "schemas": {
+                "input": {
+                  "input": {
+                    "type": "json",
+                    "value": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"LogProcess\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"logMessage\":{\"type\":\"string\"},\"logLevel\":{\"type\":\"string\"}},\"required\":[\"logMessage\"]}",
+                    "fe_metadata": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"LogProcess\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"logMessage\":{\"type\":\"string\"},\"logLevel\":{\"type\":\"string\"}},\"required\":[\"logMessage\"]}"
+                  }
+                }
+              },
+              "feSchemaMap": {}
+            }
+          },
+          {
+            "id": "ParseJSON",
+            "name": "ParseJSON",
+            "description": "Parses JSON string into JSON object",
+            "activity": {
+              "ref": "#parsejson",
+              "input": {
+                "validate": false,
+                "jsonString": "=$flow.message"
+              },
+              "schemas": {
+                "output": {
+                  "jsonObject": "schema://singleFile"
+                }
+              },
+              "feSchemaMap": {}
+            }
+          },
+          {
+            "id": "LogParser",
+            "name": "LogParser",
+            "description": "Simple SubFlow Activity",
+            "settings": {
+              "retryOnError": {
+                "count": 0,
+                "interval": 0
+              }
+            },
+            "activity": {
+              "ref": "#subflow",
+              "settings": {
+                "flowURI": "res://flow:Logger",
+                "detached": false,
+                "execTimeout": 0
+              },
+              "input": {
+                "logMessage": "=string.concat(\"Message parsed: \",coerce.toString($activity[ParseJSON].jsonObject))"
+              },
+              "schemas": {
+                "input": {
+                  "input": {
+                    "type": "json",
+                    "value": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"LogProcess\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"logMessage\":{\"type\":\"string\"},\"logLevel\":{\"type\":\"string\"}},\"required\":[\"logMessage\"]}",
+                    "fe_metadata": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"LogProcess\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"logMessage\":{\"type\":\"string\"},\"logLevel\":{\"type\":\"string\"}},\"required\":[\"logMessage\"]}"
+                  }
+                }
+              },
+              "feSchemaMap": {}
+            }
+          },
+          {
+            "id": "IngestDocument",
+            "name": "IngestDocument",
+            "description": "Simple SubFlow Activity",
+            "note": {
+              "author": {
+                "name": "VS code user",
+                "userId": "vscode"
+              },
+              "content": "Iterate over document and invoke for each document the Ingest process.",
+              "createAt": 1790254282493,
+              "lastUpdatedAt": 1790260599040,
+              "title": "IngestDocument"
+            },
+            "settings": {
+              "retryOnError": {
+                "count": 0,
+                "interval": 0
+              }
+            },
+            "activity": {
+              "ref": "#subflow",
+              "settings": {
+                "flowURI": "res://flow:IngestDocument",
+                "detached": false,
+                "execTimeout": 0
+              },
+              "input": {
+                "file": {
+                  "mapping": {
+                    "createdTime": "=$activity[ParseJSON].jsonObject.createdTime",
+                    "eventType": "=$activity[ParseJSON].jsonObject.eventType",
+                    "fileId": "=$activity[ParseJSON].jsonObject.fileId",
+                    "fileFullPath": "=$activity[ParseJSON].jsonObject.fileFullPath",
+                    "fileName": "=$activity[ParseJSON].jsonObject.fileName",
+                    "modifiedTime": "=$activity[ParseJSON].jsonObject.modifiedTime",
+                    "collectionName": "=$property[\"VECTORSTORE.COLLECTIONNAME\"]"
+                  }
+                }
+              },
+              "schemas": {
+                "input": {
+                  "input": {
+                    "type": "json",
+                    "value": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"FileMessage\",\"type\":\"object\",\"properties\":{\"file\":{\"type\":\"object\",\"properties\":{\"createdTime\":{\"type\":\"string\",\"format\":\"date-time\",\"description\":\"Timestamp when the file event was created.\"},\"eventType\":{\"type\":\"string\",\"description\":\"The type of event (e.g., CREATED).\"},\"fileId\":{\"type\":\"integer\",\"description\":\"Unique identifier for the file.\"},\"fileFullPath\":{\"type\":\"string\",\"format\":\"uri\",\"description\":\"Fullpath and filename to access the file.\"},\"fileName\":{\"type\":\"string\",\"description\":\"Name of the file.\"},\"modifiedTime\":{\"type\":\"string\",\"format\":\"date-time\",\"description\":\"Timestamp when the file was last modified.\"},\"collectionName\":{\"type\":\"string\",\"description\":\"Name of the VectorStore table.\"}},\"required\":[\"createdTime\",\"eventType\",\"fileId\",\"fileFullPath\",\"fileName\",\"modifiedTime\"]}},\"required\":[\"file\"]}",
+                    "fe_metadata": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"FileMessage\",\"type\":\"object\",\"properties\":{\"file\":{\"type\":\"object\",\"properties\":{\"createdTime\":{\"type\":\"string\",\"format\":\"date-time\",\"description\":\"Timestamp when the file event was created.\"},\"eventType\":{\"type\":\"string\",\"description\":\"The type of event (e.g., CREATED).\"},\"fileId\":{\"type\":\"integer\",\"description\":\"Unique identifier for the file.\"},\"fileFullPath\":{\"type\":\"string\",\"format\":\"uri\",\"description\":\"Fullpath and filename to access the file.\"},\"fileName\":{\"type\":\"string\",\"description\":\"Name of the file.\"},\"modifiedTime\":{\"type\":\"string\",\"format\":\"date-time\",\"description\":\"Timestamp when the file was last modified.\"},\"collectionName\":{\"type\":\"string\",\"description\":\"Name of the VectorStore table.\"}},\"required\":[\"createdTime\",\"eventType\",\"fileId\",\"fileFullPath\",\"fileName\",\"modifiedTime\"]}},\"required\":[\"file\"]}"
+                  }
+                },
+                "output": {
+                  "output": {
+                    "type": "json",
+                    "value": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"FileMessage\",\"type\":\"object\",\"properties\":{\"output\":{\"type\":\"object\",\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"ResultCode\"},\"message\":{\"type\":\"string\",\"description\":\"ResultMessage\"}},\"required\":[\"code\"]}}}",
+                    "fe_metadata": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"FileMessage\",\"type\":\"object\",\"properties\":{\"output\":{\"type\":\"object\",\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"ResultCode\"},\"message\":{\"type\":\"string\",\"description\":\"ResultMessage\"}},\"required\":[\"code\"]}}}"
+                  }
+                }
+              },
+              "feSchemaMap": {}
+            }
+          },
+          {
+            "id": "LogIngestionResult",
+            "name": "LogIngestionResult",
+            "description": "Simple SubFlow Activity",
+            "settings": {
+              "retryOnError": {
+                "count": 0,
+                "interval": 0
+              }
+            },
+            "activity": {
+              "ref": "#subflow",
+              "settings": {
+                "flowURI": "res://flow:Logger",
+                "detached": false,
+                "execTimeout": 0
+              },
+              "input": {
+                "logMessage": "=coerce.toString($activity[IngestDocument])"
+              },
+              "schemas": {
+                "input": {
+                  "input": {
+                    "type": "json",
+                    "value": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"LogProcess\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"logMessage\":{\"type\":\"string\"},\"logLevel\":{\"type\":\"string\"}},\"required\":[\"logMessage\"]}",
+                    "fe_metadata": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"LogProcess\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"logMessage\":{\"type\":\"string\"},\"logLevel\":{\"type\":\"string\"}},\"required\":[\"logMessage\"]}"
+                  }
+                }
+              },
+              "feSchemaMap": {}
+            }
+          },
+          {
+            "id": "EMSAcknowledge",
+            "name": "EMSAcknowledge",
+            "description": "EMS acknowledge activity acknowledges message in explicit client ack mode",
+            "activity": {
+              "ref": "#acknowledge"
+            }
+          },
+          {
+            "id": "Return",
+            "name": "Return",
+            "description": "Simple Return Activity",
+            "activity": {
+              "ref": "#actreturn"
+            }
+          }
+        ],
+        "fe_metadata": "eyJTdGFydEFjdGl2aXR5Ijp7IngiOjAsInkiOjEwNH0sIkxvZ1N0YXJ0Ijp7IngiOjExMiwieSI6OTN9LCJQYXJzZUpTT04iOnsieCI6MzY3LCJ5Ijo4OX0sIkxvZ1BhcnNlciI6eyJ4Ijo1NzIsInkiOjg4fSwiSW5nZXN0RG9jdW1lbnQiOnsieCI6MzUzLCJ5IjoyNDJ9LCJMb2dJbmdlc3Rpb25SZXN1bHQiOnsieCI6NTYxLCJ5IjoyNDZ9LCJFTVNBY2tub3dsZWRnZSI6eyJ4Ijo3ODgsInkiOjI0M30sIlJldHVybiI6eyJ4IjoxMDQ1LCJ5IjoyMzh9fQ==",
+        "metadata": {
+          "input": [
+            {
+              "name": "message",
+              "type": "string"
+            },
+            {
+              "name": "headers",
+              "type": "object",
+              "schema": {
+                "type": "json",
+                "value": "{\"destination\":{\"type\":\"string\"},\"replyTo\":{\"type\":\"string\"},\"deliveryMode\":{\"type\":\"string\"},\"messageID\":{\"type\":\"string\"},\"timestamp\":{\"type\":\"integer\"},\"expiration\":{\"type\":\"integer\"},\"reDelivered\":{\"type\":\"boolean\"},\"priority\":{\"type\":\"integer\"},\"correlationID\":{\"type\":\"string\"}}"
+              }
+            },
+            {
+              "name": "messageProperties",
+              "type": "object",
+              "schema": {
+                "type": "json",
+                "value": "{\"property\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"},\"value\":{\"type\":\"string\"},\"type\":{\"type\":\"string\"}},\"required\":[\"name\",\"value\"]}}}"
+              }
+            }
+          ],
+          "output": [],
+          "fe_metadata": {
+            "input": "{\"type\":\"object\",\"title\":\"ReceiveEMSMessage\",\"properties\":{\"message\":{\"type\":\"string\",\"required\":false},\"headers\":{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"type\":\"object\",\"properties\":{\"destination\":{\"type\":\"string\"},\"replyTo\":{\"type\":\"string\"},\"deliveryMode\":{\"type\":\"string\"},\"messageID\":{\"type\":\"string\"},\"timestamp\":{\"type\":\"integer\"},\"expiration\":{\"type\":\"integer\"},\"reDelivered\":{\"type\":\"boolean\"},\"priority\":{\"type\":\"integer\"},\"correlationID\":{\"type\":\"string\"}}},\"messageProperties\":{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"type\":\"object\",\"properties\":{\"property\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"},\"value\":{\"type\":\"string\"},\"type\":{\"type\":\"string\"}},\"required\":[\"name\",\"value\"]}}}}}}"
+          }
+        }
+      }
+    },
+    {
+      "id": "flow:PublishFileTriggerMessage",
+      "data": {
+        "name": "PublishFileTriggerMessage",
+        "description": "DEV Tool to manually publish new/changed file notification on EMS",
+        "links": [
+          {
+            "id": 1,
+            "from": "StartActivity",
+            "to": "EMSSendMessage",
+            "type": "label",
+            "label": "StartActivity to EMSSendMessage"
+          },
+          {
+            "id": 2,
+            "from": "EMSSendMessage",
+            "to": "Return",
+            "type": "label",
+            "label": "EMSSendMessage to Return"
+          }
+        ],
+        "tasks": [
+          {
+            "id": "StartActivity",
+            "name": "StartActivity",
+            "description": "NoOp Activity",
+            "activity": {
+              "ref": "#noop"
+            }
+          },
+          {
+            "id": "EMSSendMessage",
+            "name": "EMSSendMessage",
+            "description": "This activity sends message to the specified EMS destination",
+            "activity": {
+              "ref": "#sendmessage",
+              "settings": {
+                "connection": "conn://e7a79509-003b-45c6-acb2-2816db8c4029",
+                "destinationType": "=$property[\"EMS.DOCUMENTTRIGGER.DESTINATIONTYPE\"]",
+                "settingDestination": "=$property[\"EMS.DOCUMENTTRIGGER.DESTINATION\"]",
+                "deliveryDelay": 0
+              },
+              "input": {
+                "message": "=coerce.toString($flow.body)",
+                "destination": ""
+              },
+              "schemas": {
+                "input": {
+                  "headers": {
+                    "type": "json",
+                    "value": "{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"type\":\"object\",\"properties\":{\"correlationID\":{\"type\":\"string\"},\"replyTo\":{\"type\":\"string\"},\"deliveryMode\":{\"type\":\"string\"},\"expiration\":{\"type\":\"integer\"},\"priority\":{\"type\":\"integer\"}}}",
+                    "fe_metadata": "{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"type\":\"object\",\"properties\":{\"correlationID\":{\"type\":\"string\"},\"replyTo\":{\"type\":\"string\"},\"deliveryMode\":{\"type\":\"string\"},\"expiration\":{\"type\":\"integer\"},\"priority\":{\"type\":\"integer\"}}}"
+                  },
+                  "messageProperties": {
+                    "type": "json",
+                    "value": "{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"type\":\"object\",\"properties\":{\"property\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"},\"value\":{\"type\":\"string\"},\"type\":{\"type\":\"string\"}},\"required\":[\"name\",\"value\"]}}}}",
+                    "fe_metadata": "{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"type\":\"object\",\"properties\":{\"property\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"},\"value\":{\"type\":\"string\"},\"type\":{\"type\":\"string\"}},\"required\":[\"name\",\"value\"]}}}}"
+                  }
+                }
+              },
+              "feSchemaMap": {}
+            }
+          },
+          {
+            "id": "Return",
+            "name": "Return",
+            "description": "Simple Return Activity",
+            "activity": {
+              "ref": "#actreturn",
+              "settings": {
+                "mappings": {
+                  "code": 200,
+                  "message": "=string.concat(\"messageId: \",$activity[EMSSendMessage].messageId)"
+                }
+              }
+            }
+          }
+        ],
+        "fe_metadata": "eyJTdGFydEFjdGl2aXR5Ijp7IngiOjEwMCwieSI6MTAwfSwiRU1TU2VuZE1lc3NhZ2UiOnsieCI6MjcwLCJ5Ijo4OH0sIlJldHVybiI6eyJ4Ijo1OTQsInkiOjg1fX0=",
+        "metadata": {
+          "input": [
+            {
+              "name": "headers",
+              "type": "object",
+              "schema": {
+                "type": "json",
+                "value": "{\"Accept\":{\"type\":\"string\",\"visible\":false},\"Accept-Charset\":{\"type\":\"string\",\"visible\":false},\"Accept-Encoding\":{\"type\":\"string\",\"visible\":false},\"Authorization\":{\"type\":\"string\",\"visible\":false},\"Connection\":{\"type\":\"string\",\"visible\":false},\"Content-Length\":{\"type\":\"string\",\"visible\":false},\"Content-Type\":{\"type\":\"string\",\"visible\":false},\"Cookie\":{\"type\":\"string\",\"visible\":false},\"Pragma\":{\"type\":\"string\",\"visible\":false}}"
+              }
+            },
+            {
+              "name": "body",
+              "type": "object",
+              "schema": {
+                "type": "json",
+                "value": "{\"createdTime\":{\"type\":\"string\",\"format\":\"date-time\",\"description\":\"Timestamp when the file was created\"},\"eventType\":{\"type\":\"string\",\"enum\":[\"CREATED\",\"MODIFIED\"],\"description\":\"Type of event that triggered the payload\"},\"fileId\":{\"type\":\"integer\",\"description\":\"The internal item ID of the file in SharePoint\"},\"fileLink\":{\"type\":\"string\",\"format\":\"uri\",\"description\":\"Direct web link to access the file\"},\"fileName\":{\"type\":\"string\",\"description\":\"The name with extension of the file (e.g., Document.docx)\"},\"filePath\":{\"type\":\"string\",\"description\":\"The full path of the file in SharePoint\"},\"modifiedTime\":{\"type\":\"string\",\"format\":\"date-time\",\"description\":\"Timestamp when the file was last modified\"}}"
+              }
+            },
+            {
+              "name": "requestURI",
+              "type": "string"
+            },
+            {
+              "name": "method",
+              "type": "string"
+            }
+          ],
+          "output": [
+            {
+              "name": "code",
+              "type": "integer"
+            },
+            {
+              "name": "message",
+              "type": "string"
+            }
+          ],
+          "fe_metadata": {
+            "input": "{\"type\":\"object\",\"title\":\"ReceiveHTTPMessage\",\"properties\":{\"headers\":{\"type\":\"object\",\"properties\":{\"Accept\":{\"type\":\"string\",\"visible\":false},\"Accept-Charset\":{\"type\":\"string\",\"visible\":false},\"Accept-Encoding\":{\"type\":\"string\",\"visible\":false},\"Authorization\":{\"type\":\"string\",\"visible\":false},\"Connection\":{\"type\":\"string\",\"visible\":false},\"Content-Length\":{\"type\":\"string\",\"visible\":false},\"Content-Type\":{\"type\":\"string\",\"visible\":false},\"Cookie\":{\"type\":\"string\",\"visible\":false},\"Pragma\":{\"type\":\"string\",\"visible\":false}},\"required\":[]},\"body\":{\"type\":\"object\",\"required\":[\"createdTime\",\"eventType\",\"fileId\",\"fileLink\",\"fileName\",\"filePath\",\"modifiedTime\"],\"properties\":{\"createdTime\":{\"type\":\"string\",\"format\":\"date-time\",\"description\":\"Timestamp when the file was created\"},\"eventType\":{\"type\":\"string\",\"enum\":[\"CREATED\",\"MODIFIED\"],\"description\":\"Type of event that triggered the payload\"},\"fileId\":{\"type\":\"integer\",\"description\":\"The internal item ID of the file in SharePoint\"},\"fileLink\":{\"type\":\"string\",\"format\":\"uri\",\"description\":\"Direct web link to access the file\"},\"fileName\":{\"type\":\"string\",\"description\":\"The name with extension of the file (e.g., Document.docx)\"},\"filePath\":{\"type\":\"string\",\"description\":\"The full path of the file in SharePoint\"},\"modifiedTime\":{\"type\":\"string\",\"format\":\"date-time\",\"description\":\"Timestamp when the file was last modified\"}}},\"requestURI\":{\"type\":\"string\",\"required\":false},\"method\":{\"type\":\"string\",\"required\":false}}}",
+            "output": "{\"type\":\"object\",\"title\":\"Inputs\",\"properties\":{\"code\":{\"type\":\"integer\"},\"message\":{\"type\":\"string\"}},\"required\":[]}"
+          }
+        },
+        "explicitReply": true
+      }
+    },
+    {
+      "id": "flow:Logger",
+      "data": {
+        "name": "Logger",
+        "description": "Subflow: Logger",
+        "links": [
+          {
+            "id": 1,
+            "from": "StartActivity",
+            "to": "LogMessage",
+            "type": "label",
+            "label": "StartActivity to LogMessage"
+          },
+          {
+            "id": 2,
+            "from": "LogMessage",
+            "to": "Return",
+            "type": "label",
+            "label": "LogMessage to Return"
+          }
+        ],
+        "tasks": [
+          {
+            "id": "StartActivity",
+            "name": "StartActivity",
+            "description": "NoOp Activity",
+            "activity": {
+              "ref": "#noop"
+            }
+          },
+          {
+            "id": "LogMessage",
+            "name": "LogMessage",
+            "description": "Simple Log Message Activity",
+            "activity": {
+              "ref": "#log",
+              "input": {
+                "Log Level": "INFO",
+                "flowInfo": false,
+                "message": "=string.concat(\"**** \",$flowctx[\"ParentFlowName\"],\" **** - \",$flow.logMessage )",
+                "logLevel": {
+                  "@conditional": [
+                    {
+                      "string.length($flow.logLevel)>0": "=$flow.logLevel"
+                    }
+                  ]
+                },
+                "loggerName": "",
+                "fieldPrefix": ""
+              },
+              "schemas": {
+                "input": {
+                  "dynamicLogFields": {
+                    "type": "json",
+                    "value": "{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"type\":\"object\",\"properties\":{\"fields\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"name\",\"value\"]}}}}",
+                    "fe_metadata": "{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"type\":\"object\",\"properties\":{\"fields\":{\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"name\",\"value\"]}}}}"
+                  }
+                }
+              },
+              "feSchemaMap": {}
+            }
+          },
+          {
+            "id": "Return",
+            "name": "Return",
+            "description": "Simple Return Activity",
+            "activity": {
+              "ref": "#actreturn"
+            }
+          }
+        ],
+        "fe_metadata": "eyJTdGFydEFjdGl2aXR5Ijp7IngiOjEwMCwieSI6MTAwfSwiTG9nTWVzc2FnZSI6eyJ4IjoyNzQsInkiOjkzfSwiUmV0dXJuIjp7IngiOjUxNywieSI6OTV9fQ==",
+        "metadata": {
+          "input": [
+            {
+              "name": "logMessage",
+              "type": "string"
+            },
+            {
+              "name": "logLevel",
+              "type": "string"
+            }
+          ],
+          "output": [],
+          "fe_metadata": {
+            "input": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"LogProcess\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"logMessage\":{\"type\":\"string\"},\"logLevel\":{\"type\":\"string\"}},\"required\":[\"logMessage\"]}"
+          }
+        }
+      }
+    },
+    {
+      "id": "flow:IngestDocument",
+      "data": {
+        "name": "IngestDocument",
+        "description": "Subflow: Ingest document into vectorstore",
+        "links": [
+          {
+            "id": 1,
+            "from": "StartActivity",
+            "to": "LogStart",
+            "type": "label",
+            "label": "StartActivity to StartaSubFlow"
+          },
+          {
+            "id": 2,
+            "from": "LogStart",
+            "to": "ChunkAndEmbedDocuments_Preview",
+            "type": "label",
+            "label": "LogStart to ChunkAndEmbedDocuments_Preview"
+          },
+          {
+            "id": 3,
+            "from": "ChunkAndEmbedDocuments_Preview",
+            "to": "Mapper",
+            "type": "label",
+            "label": "ChunkAndEmbedDocuments_Preview to Mapper"
+          },
+          {
+            "id": 4,
+            "from": "Mapper",
+            "to": "ActiveSpacesVectorUpsert",
+            "type": "label",
+            "label": "Mapper to ActiveSpacesVectorUpsert"
+          },
+          {
+            "id": 5,
+            "from": "ActiveSpacesVectorUpsert",
+            "to": "UpsertLog",
+            "type": "label",
+            "label": "ActiveSpacesVectorUpsert to CopyOfStartaSubFlow"
+          },
+          {
+            "id": 6,
+            "from": "UpsertLog",
+            "to": "ReturnOk",
+            "type": "label",
+            "label": "CopyOfStartaSubFlow to ReturnOk"
+          }
+        ],
+        "tasks": [
+          {
+            "id": "StartActivity",
+            "name": "StartActivity",
+            "description": "NoOp Activity",
+            "activity": {
+              "ref": "#noop"
+            }
+          },
+          {
+            "id": "LogStart",
+            "name": "LogStart",
+            "description": "Simple SubFlow Activity",
+            "settings": {
+              "retryOnError": {
+                "count": 0,
+                "interval": 0
+              }
+            },
+            "activity": {
+              "ref": "#subflow",
+              "settings": {
+                "flowURI": "res://flow:Logger",
+                "detached": false,
+                "execTimeout": 0
+              },
+              "input": {
+                "logMessage": "=coerce.toString($flow.file)"
+              },
+              "schemas": {
+                "input": {
+                  "input": {
+                    "type": "json",
+                    "value": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"LogProcess\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"logMessage\":{\"type\":\"string\"},\"logLevel\":{\"type\":\"string\"}},\"required\":[\"logMessage\"]}",
+                    "fe_metadata": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"LogProcess\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"logMessage\":{\"type\":\"string\"},\"logLevel\":{\"type\":\"string\"}},\"required\":[\"logMessage\"]}"
+                  }
+                }
+              },
+              "feSchemaMap": {}
+            }
+          },
+          {
+            "id": "ChunkAndEmbedDocuments_Preview",
+            "name": "ChunkAndEmbedDocuments_Preview",
+            "description": "Split text or files into chunks and turn each chunk into an embedding vector. This functionality is in preview stage and not recommended for production use.",
+            "activity": {
+              "ref": "#chunkandembeddocuments",
+              "settings": {
+                "contentSource": "File Paths",
+                "fileEncoding": "UTF-8",
+                "maxFileSizeMB": 25,
+                "onFileError": "Fail",
+                "chunkingStrategy": "Recursive",
+                "chunkSize": 3200,
+                "chunkOverlap": 1600,
+                "delimiterIsRegex": false,
+                "separators": "\\n\\n,\\n,",
+                "delimiter": "",
+                "markdownHeadingLevel": 2,
+                "minChunkSize": 0,
+                "embeddingProvider": "OpenAI",
+                "embeddingModel": "text-embedding-3-small",
+                "dimensions": 0,
+                "requestTimeoutSeconds": 60
+              },
+              "input": {
+                "text": "",
+                "documentId": "",
+                "apiKey": "=$property[\"OPENAI.API_KEY\"]",
+                "baseUrl": "=$property[\"OPENAI.BASE_URL\"]",
+                "filePaths": "=array.create($flow.file.fileFullPath)"
+              },
+              "schemas": {
+                "output": {
+                  "embeddings": {
+                    "type": "json",
+                    "value": "{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"},\"index\":{\"type\":\"number\"},\"text\":{\"type\":\"string\"},\"source\":{\"type\":\"string\"},\"startOffset\":{\"type\":\"number\"},\"endOffset\":{\"type\":\"number\"},\"charCount\":{\"type\":\"number\"},\"headings\":{\"type\":\"array\",\"items\":{}},\"metadata\":{\"type\":\"object\",\"properties\":{}},\"embedding\":{\"type\":\"array\",\"items\":{}},\"dimensions\":{\"type\":\"number\"}}}}",
+                    "fe_metadata": "[{\r\n  \"id\": \"\",\r\n  \"index\": 0,\r\n  \"text\": \"\",\r\n  \"source\": \"\",\r\n  \"startOffset\": 0,\r\n  \"endOffset\": 0,\r\n  \"charCount\": 0,\r\n  \"headings\": [],\r\n  \"metadata\": {},\r\n  \"embedding\": [],\r\n  \"dimensions\": 0\r\n}]"
+                  },
+                  "skippedFiles": {
+                    "type": "json",
+                    "value": "{\"$schema\":\"http://json-schema.org/draft-04/schema#\",\"type\":\"array\",\"items\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"reason\":{\"type\":\"string\"}}}}",
+                    "fe_metadata": "[{\"path\": \"\", \"reason\": \"\"}]"
+                  }
+                }
+              },
+              "feSchemaMap": {}
+            }
+          },
+          {
+            "id": "Mapper",
+            "name": "Mapper",
+            "description": "Mapper Activity",
+            "type": "iterator",
+            "settings": {
+              "iterate": "=$activity[ChunkAndEmbedDocuments_Preview].embeddings",
+              "accumulate": true
+            },
+            "activity": {
+              "ref": "#mapper",
+              "input": {
+                "input": {
+                  "mapping": {
+                    "id": "=$iteration[value].index",
+                    "content": "=$iteration[value].text",
+                    "metadata": "=coerce.toString($iteration[value].metadata)",
+                    "embedding": {
+                      "@foreach($iteration[value].embedding,embedding)": {
+                        "=": "$loop"
+                      }
+                    }
+                  }
+                }
+              },
+              "schemas": {
+                "input": {
+                  "input": {
+                    "type": "json",
+                    "value": "{\r\n  \"type\": \"object\",\r\n  \"properties\": {\r\n    \"id\": { \"type\": \"integer\" },\r\n    \"content\": { \"type\": \"string\" },\r\n    \"embedding\": { \"type\": \"array\" },\r\n    \"metadata\": { \"type\": \"string\" }\r\n  }\r\n}",
+                    "fe_metadata": "{\r\n  \"type\": \"object\",\r\n  \"properties\": {\r\n    \"id\": { \"type\": \"integer\" },\r\n    \"content\": { \"type\": \"string\" },\r\n    \"embedding\": { \"type\": \"array\" },\r\n    \"metadata\": { \"type\": \"string\" }\r\n  }\r\n}"
+                  }
+                },
+                "output": {
+                  "output": {
+                    "type": "json",
+                    "value": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"id\": {\n      \"type\": \"integer\"\n    },\n    \"content\": {\n      \"type\": \"string\"\n    },\n    \"embedding\": {\n      \"type\": \"array\"\n    },\n    \"metadata\": {\n      \"type\": \"string\"\n    }\n  }\n}",
+                    "fe_metadata": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"id\": {\n      \"type\": \"integer\"\n    },\n    \"content\": {\n      \"type\": \"string\"\n    },\n    \"embedding\": {\n      \"type\": \"array\"\n    },\n    \"metadata\": {\n      \"type\": \"string\"\n    }\n  }\n}"
+                  }
+                }
+              },
+              "feSchemaMap": {}
+            }
+          },
+          {
+            "id": "ActiveSpacesVectorUpsert",
+            "name": "ActiveSpacesVectorUpsert",
+            "description": "This activity writes rows containing vector embeddings to a TIBCO ActiveSpaces Grid table",
+            "type": "iterator",
+            "settings": {
+              "iterate": "=$activity[Mapper]",
+              "accumulate": false,
+              "retryOnError": {
+                "count": 0,
+                "interval": 0
+              }
+            },
+            "activity": {
+              "ref": "#vectorupsert",
+              "settings": {
+                "asConnection": "conn://399d3330-b60f-46f4-8f8d-1c8b2ed973c6",
+                "writeMode": "Replace",
+                "tableName": "=$property[\"VECTORSTORE.COLLECTIONNAME\"]"
+              },
+              "input": {
+                "data": {
+                  "mapping": {
+                    "id": "=$iteration[value].output.id",
+                    "content": "=$iteration[value].output.content",
+                    "embedding": {
+                      "@foreach($iteration[value].output.embedding,embedding)": {
+                        "=": "$loop"
+                      }
+                    },
+                    "metadata": "=$iteration[value].output.metadata"
+                  }
+                }
+              },
+              "schemas": {
+                "input": {
+                  "data": {
+                    "type": "json",
+                    "value": "{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"integer\"},\"content\":{\"type\":\"string\"},\"embedding\":{\"type\":\"array\"},\"metadata\":{\"type\":\"string\"}}}",
+                    "fe_metadata": "{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"integer\"},\"content\":{\"type\":\"string\"},\"embedding\":{\"type\":\"array\"},\"metadata\":{\"type\":\"string\"}}}"
+                  }
+                }
+              },
+              "feSchemaMap": {}
+            }
+          },
+          {
+            "id": "UpsertLog",
+            "name": "UpsertLog",
+            "description": "Simple SubFlow Activity",
+            "settings": {
+              "retryOnError": {
+                "count": 0,
+                "interval": 0
+              }
+            },
+            "activity": {
+              "ref": "#subflow",
+              "settings": {
+                "flowURI": "res://flow:Logger",
+                "detached": false,
+                "execTimeout": 0
+              },
+              "input": {
+                "logMessage": "=string.concat(coerce.toString($activity[ActiveSpacesVectorUpsert].rowCount), \" Embeddings stored to vectorstore. \")"
+              },
+              "schemas": {
+                "input": {
+                  "input": {
+                    "type": "json",
+                    "value": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"LogProcess\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"logMessage\":{\"type\":\"string\"},\"logLevel\":{\"type\":\"string\"}},\"required\":[\"logMessage\"]}",
+                    "fe_metadata": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"LogProcess\",\"type\":\"object\",\"additionalProperties\":false,\"properties\":{\"logMessage\":{\"type\":\"string\"},\"logLevel\":{\"type\":\"string\"}},\"required\":[\"logMessage\"]}"
+                  }
+                }
+              },
+              "feSchemaMap": {}
+            }
+          },
+          {
+            "id": "ReturnOk",
+            "name": "ReturnOk",
+            "description": "Simple Return Activity",
+            "activity": {
+              "ref": "#actreturn",
+              "settings": {
+                "mappings": {
+                  "output": {
+                    "mapping": {
+                      "code": "OK",
+                      "message": "=$flow.file.fileFullPath"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "fe_metadata": "eyJTdGFydEFjdGl2aXR5Ijp7IngiOjE1LCJ5IjoxMDF9LCJMb2dTdGFydCI6eyJ4IjoxNDYsInkiOjkzfSwiQ2h1bmtBbmRFbWJlZERvY3VtZW50c19QcmV2aWV3Ijp7IngiOjQzNywieSI6OTR9LCJNYXBwZXIiOnsieCI6NjY1LCJ5Ijo5Mn0sIkFjdGl2ZVNwYWNlc1ZlY3RvclVwc2VydCI6eyJ4Ijo5MjYsInkiOjk1fSwiVXBzZXJ0TG9nIjp7IngiOjExMzgsInkiOjkzfSwiUmV0dXJuT2siOnsieCI6MTM2MywieSI6OTR9fQ==",
+        "metadata": {
+          "input": [
+            {
+              "name": "file",
+              "type": "object",
+              "schema": {
+                "type": "json",
+                "value": "{\"createdTime\":{\"type\":\"string\",\"format\":\"date-time\",\"description\":\"Timestamp when the file event was created.\"},\"eventType\":{\"type\":\"string\",\"description\":\"The type of event (e.g., CREATED).\"},\"fileId\":{\"type\":\"integer\",\"description\":\"Unique identifier for the file.\"},\"fileFullPath\":{\"type\":\"string\",\"format\":\"uri\",\"description\":\"Fullpath and filename to access the file.\"},\"fileName\":{\"type\":\"string\",\"description\":\"Name of the file.\"},\"modifiedTime\":{\"type\":\"string\",\"format\":\"date-time\",\"description\":\"Timestamp when the file was last modified.\"},\"collectionName\":{\"type\":\"string\",\"description\":\"Name of the VectorStore table.\"}}"
+              }
+            }
+          ],
+          "output": [
+            {
+              "name": "output",
+              "type": "object",
+              "schema": {
+                "type": "json",
+                "value": "{\"code\":{\"type\":\"string\",\"description\":\"ResultCode\"},\"message\":{\"type\":\"string\",\"description\":\"ResultMessage\"}}"
+              }
+            }
+          ],
+          "fe_metadata": {
+            "input": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"FileMessage\",\"type\":\"object\",\"properties\":{\"file\":{\"type\":\"object\",\"properties\":{\"createdTime\":{\"type\":\"string\",\"format\":\"date-time\",\"description\":\"Timestamp when the file event was created.\"},\"eventType\":{\"type\":\"string\",\"description\":\"The type of event (e.g., CREATED).\"},\"fileId\":{\"type\":\"integer\",\"description\":\"Unique identifier for the file.\"},\"fileFullPath\":{\"type\":\"string\",\"format\":\"uri\",\"description\":\"Fullpath and filename to access the file.\"},\"fileName\":{\"type\":\"string\",\"description\":\"Name of the file.\"},\"modifiedTime\":{\"type\":\"string\",\"format\":\"date-time\",\"description\":\"Timestamp when the file was last modified.\"},\"collectionName\":{\"type\":\"string\",\"description\":\"Name of the VectorStore table.\"}},\"required\":[\"createdTime\",\"eventType\",\"fileId\",\"fileFullPath\",\"fileName\",\"modifiedTime\"]}},\"required\":[\"file\"]}",
+            "output": "{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"title\":\"FileMessage\",\"type\":\"object\",\"properties\":{\"output\":{\"type\":\"object\",\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"ResultCode\"},\"message\":{\"type\":\"string\",\"description\":\"ResultMessage\"}},\"required\":[\"code\"]}}}"
+          }
+        }
+      }
+    }
+  ],
+  "properties": [
+    {
+      "name": "ActiveSpaces.AS-VectorDB.Grid_URL",
+      "type": "string",
+      "value": "http://localhost:13031"
+    },
+    {
+      "name": "ActiveSpaces.AS-VectorDB.Grid_Name",
+      "type": "string",
+      "value": "_default"
+    },
+    {
+      "name": "ActiveSpaces.AS-VectorDB.Username",
+      "type": "string",
+      "value": ""
+    },
+    {
+      "name": "ActiveSpaces.AS-VectorDB.Password",
+      "type": "string",
+      "value": ""
+    },
+    {
+      "name": "EMS.CP-EMS15dev.Server_URL",
+      "type": "string",
+      "value": "tcp://51.138.63.223:9011,tcp://51.138.63.223:19011"
+    },
+    {
+      "name": "EMS.CP-EMS15dev.User_Name",
+      "type": "string",
+      "value": ""
+    },
+    {
+      "name": "EMS.CP-EMS15dev.Password",
+      "type": "string",
+      "value": ""
+    },
+    {
+      "name": "EMS.CP-EMS15dev.Client_ID",
+      "type": "string",
+      "value": ""
+    },
+    {
+      "name": "EMS.CP-EMS15dev.Reconnect_Count",
+      "type": "float64",
+      "value": 4
+    },
+    {
+      "name": "EMS.CP-EMS15dev.Reconnect_Delay",
+      "type": "float64",
+      "value": 500
+    },
+    {
+      "name": "EMS.CP-EMS15dev.Retry_Timeout",
+      "type": "float64",
+      "value": 0
+    },
+    {
+      "name": "sharepoint.oauthScope",
+      "type": "string",
+      "value": "https://graph.microsoft.com/.default"
+    },
+    {
+      "name": "sharepoint.oauthClientId",
+      "type": "string",
+      "value": "<replace>"
+    },
+    {
+      "name": "sharepoint.oauthClientSecret",
+      "type": "string",
+      "value": "<replace>"
+    },
+    {
+      "name": "sharepoint.oauthGrantType",
+      "type": "string",
+      "value": "client_credentials"
+    },
+    {
+      "name": "sharepoint.oauthTokenUri",
+      "type": "string",
+      "value": "https://login.microsoftonline.com/5f3a2ecd-7ddf-4c5d-ae5f-f14729eee92b/oauth2/v2.0"
+    },
+    {
+      "name": "sharepoint.site-id",
+      "type": "string",
+      "value": "<replace>"
+    },
+    {
+      "name": "MCPSERVER.HTTP-PORT",
+      "type": "string",
+      "value": "18081"
+    },
+    {
+      "name": "OPENAI.API_KEY",
+      "type": "string",
+      "value": ""
+    },
+    {
+      "name": "OPENAI.BASE_URL",
+      "type": "string",
+      "value": "https://api.openai.com/v1"
+    },
+    {
+      "name": "VECTORSTORE.REPLICATIONFACTOR",
+      "type": "float64",
+      "value": 0
+    },
+    {
+      "name": "VECTORSTORE.ONDISK",
+      "type": "boolean",
+      "value": false
+    },
+    {
+      "name": "VECTORSTORE.DIMENSIONS",
+      "type": "float64",
+      "value": 1536
+    },
+    {
+      "name": "EMS.DOCUMENTTRIGGER.DESTINATIONTYPE",
+      "type": "string",
+      "value": "QUEUE"
+    },
+    {
+      "name": "EMS.DOCUMENTTRIGGER.DESTINATION",
+      "type": "string",
+      "value": "rag-document"
+    },
+    {
+      "name": "SHARED-DATA.SHAREPOINT.OAUTH-ACCESS-TOKEN",
+      "type": "string",
+      "value": ""
+    },
+    {
+      "name": "VECTORSTORE.COLLECTIONNAME",
+      "type": "string",
+      "value": "rag2"
+    },
+    {
+      "name": "VECTORSTORE.SIMILAIRITYFUNCTION",
+      "type": "string",
+      "value": "cosine"
+    },
+    {
+      "name": "VECTORSTORE.DISTANCEMETRICS",
+      "type": "float64",
+      "value": 0.1
+    },
+    {
+      "name": "WEBSERVICE.EXPOSED.PORTNUMBER",
+      "type": "float64",
+      "value": 19091
+    },
+    {
+      "name": "VECTORSTORE.COLLECTIONAME_PREFIX",
+      "type": "string",
+      "value": "NEXPERIA"
+    },
+    {
+      "name": "INGESTION.TYPE",
+      "type": "string",
+      "value": "NEW"
+    },
+    {
+      "name": "INGESTION.TEMP_FILE_LOCATION",
+      "type": "string",
+      "value": "/tmp"
+    }
+  ],
+  "schemas": {
+    "fileTrigger": {
+      "type": "json",
+      "value": "{\r\n    \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\r\n    \"title\": \"MessageArray\",\r\n    \"type\": \"array\",\r\n    \"items\": {\r\n        \"type\": \"object\",\r\n        \"properties\": {\r\n            \"createdTime\": {\r\n                \"type\": \"string\",\r\n                \"format\": \"date-time\",\r\n                \"description\": \"Timestamp when the file event was created.\"\r\n            },\r\n            \"eventType\": {\r\n                \"type\": \"string\",\r\n                \"description\": \"The type of event (e.g., CREATED).\"\r\n            },\r\n            \"fileId\": {\r\n                \"type\": \"integer\",\r\n                \"description\": \"Unique identifier for the file.\"\r\n            },\r\n            \"fileLink\": {\r\n                \"type\": \"string\",\r\n                \"format\": \"uri\",\r\n                \"description\": \"SharePoint link to access the file.\"\r\n            },\r\n            \"fileName\": {\r\n                \"type\": \"string\",\r\n                \"description\": \"Name of the file.\"\r\n            },\r\n            \"filePath\": {\r\n                \"type\": \"string\",\r\n                \"description\": \"Relative path of the file.\"\r\n            },\r\n            \"modifiedTime\": {\r\n                \"type\": \"string\",\r\n                \"format\": \"date-time\",\r\n                \"description\": \"Timestamp when the file was last modified.\"\r\n            }\r\n        },\r\n        \"required\": [\r\n            \"createdTime\",\r\n            \"eventType\",\r\n            \"fileId\",\r\n            \"fileLink\",\r\n            \"fileName\",\r\n            \"filePath\",\r\n            \"modifiedTime\"\r\n        ]\r\n    }\r\n}",
+      "fe_metadata": "{\r\n    \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\r\n    \"title\": \"MessageArray\",\r\n    \"type\": \"array\",\r\n    \"items\": {\r\n        \"type\": \"object\",\r\n        \"properties\": {\r\n            \"createdTime\": {\r\n                \"type\": \"string\",\r\n                \"format\": \"date-time\",\r\n                \"description\": \"Timestamp when the file event was created.\"\r\n            },\r\n            \"eventType\": {\r\n                \"type\": \"string\",\r\n                \"description\": \"The type of event (e.g., CREATED).\"\r\n            },\r\n            \"fileId\": {\r\n                \"type\": \"integer\",\r\n                \"description\": \"Unique identifier for the file.\"\r\n            },\r\n            \"fileLink\": {\r\n                \"type\": \"string\",\r\n                \"format\": \"uri\",\r\n                \"description\": \"SharePoint link to access the file.\"\r\n            },\r\n            \"fileName\": {\r\n                \"type\": \"string\",\r\n                \"description\": \"Name of the file.\"\r\n            },\r\n            \"filePath\": {\r\n                \"type\": \"string\",\r\n                \"description\": \"Relative path of the file.\"\r\n            },\r\n            \"modifiedTime\": {\r\n                \"type\": \"string\",\r\n                \"format\": \"date-time\",\r\n                \"description\": \"Timestamp when the file was last modified.\"\r\n            }\r\n        },\r\n        \"required\": [\r\n            \"createdTime\",\r\n            \"eventType\",\r\n            \"fileId\",\r\n            \"fileLink\",\r\n            \"fileName\",\r\n            \"filePath\",\r\n            \"modifiedTime\"\r\n        ]\r\n    }\r\n}"
+    },
+    "singleFile": {
+      "type": "json",
+      "value": "{\r\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\r\n  \"title\": \"SharePointFileEvent\",\r\n  \"type\": \"object\",\r\n  \"properties\": {\r\n    \"createdTime\": {\r\n      \"type\": \"string\",\r\n      \"format\": \"date-time\"\r\n    },\r\n    \"eventType\": {\r\n      \"type\": \"string\",\r\n      \"enum\": [\"CREATED\", \"MODIFIED\"]\r\n    },\r\n    \"fileId\": {\r\n      \"type\": \"integer\"\r\n    },\r\n    \"fileFullPath\": {\r\n      \"type\": \"string\",\r\n      \"format\": \"uri\"\r\n    },\r\n    \"fileName\": {\r\n      \"type\": \"string\"\r\n    },\r\n    \"modifiedTime\": {\r\n      \"type\": \"string\",\r\n      \"format\": \"date-time\"\r\n    }\r\n  },\r\n  \"required\": [\r\n    \"createdTime\",\r\n    \"eventType\",\r\n    \"fileId\",\r\n    \"fileFullPath\",\r\n    \"fileName\",\r\n    \"modifiedTime\"\r\n  ]\r\n}",
+      "fe_metadata": "{\r\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\r\n  \"title\": \"SharePointFileEvent\",\r\n  \"type\": \"object\",\r\n  \"properties\": {\r\n    \"createdTime\": {\r\n      \"type\": \"string\",\r\n      \"format\": \"date-time\"\r\n    },\r\n    \"eventType\": {\r\n      \"type\": \"string\",\r\n      \"enum\": [\"CREATED\", \"MODIFIED\"]\r\n    },\r\n    \"fileId\": {\r\n      \"type\": \"integer\"\r\n    },\r\n    \"fileFullPath\": {\r\n      \"type\": \"string\",\r\n      \"format\": \"uri\"\r\n    },\r\n    \"fileName\": {\r\n      \"type\": \"string\"\r\n    },\r\n    \"modifiedTime\": {\r\n      \"type\": \"string\",\r\n      \"format\": \"date-time\"\r\n    }\r\n  },\r\n  \"required\": [\r\n    \"createdTime\",\r\n    \"eventType\",\r\n    \"fileId\",\r\n    \"fileFullPath\",\r\n    \"fileName\",\r\n    \"modifiedTime\"\r\n  ]\r\n}"
+    }
+  },
+  "specs": {
+    "eda7def4": {
+      "id": "eda7def4",
+      "name": "fetchDocument",
+      "type": "OpenAPI",
+      "content": "ewogICJvcGVuYXBpIjogIjMuMC4zIiwKICAiaW5mbyI6IHsKICAgICJ0aXRsZSI6ICJNaWNyb3NvZnQgR3JhcGggU2hhcmVQb2ludCBGaWxlIERvd25sb2FkIEFQSSIsCiAgICAiZGVzY3JpcHRpb24iOiAiQVBJIGVuZHBvaW50IHRvIGRvd25sb2FkIGJpbmFyeSBmaWxlIGNvbnRlbnQgZnJvbSBhIFNoYXJlUG9pbnQgZG9jdW1lbnQgbGlicmFyeSBzaXRlLiIsCiAgICAidmVyc2lvbiI6ICIxLjAuMCIKICB9LAogICJzZXJ2ZXJzIjogWwogICAgewogICAgICAidXJsIjogImh0dHBzOi8vZ3JhcGgubWljcm9zb2Z0LmNvbS92MS4wIgogICAgfQogIF0sCiAgInBhdGhzIjogewogICAgIi9zaXRlcy97c2l0ZS1pZH0vZHJpdmUvcm9vdDp7aXRlbS1wYXRofTovY29udGVudCI6IHsKICAgICAgImdldCI6IHsKICAgICAgICAic3VtbWFyeSI6ICJEb3dubG9hZCBmaWxlIGNvbnRlbnQiLAogICAgICAgICJkZXNjcmlwdGlvbiI6ICJSZXRyaWV2ZXMgdGhlIGJpbmFyeSBzdHJlYW0gb2YgYSBzcGVjaWZpYyBmaWxlIHN0b3JlZCBpbiBTaGFyZVBvaW50LiIsCiAgICAgICAgInBhcmFtZXRlcnMiOiBbCiAgICAgICAgICB7CiAgICAgICAgICAgICJuYW1lIjogInNpdGUtaWQiLAogICAgICAgICAgICAiaW4iOiAicGF0aCIsCiAgICAgICAgICAgICJyZXF1aXJlZCI6IHRydWUsCiAgICAgICAgICAgICJkZXNjcmlwdGlvbiI6ICJUaGUgU2hhcmVQb2ludCBzaXRlIGlkZW50aWZpZXIgb3IgaG9zdG5hbWUgcGF0aCBjb21ibyAoZS5nLiwgamJyYW5kc21hLnNoYXJlcG9pbnQuY29tOi9zaXRlcy9hdHM6KSIsCiAgICAgICAgICAgICJzY2hlbWEiOiB7CiAgICAgICAgICAgICAgInR5cGUiOiAic3RyaW5nIgogICAgICAgICAgICB9LAogICAgICAgICAgICAiZXhhbXBsZSI6ICJqYnJhbmRzbWEuc2hhcmVwb2ludC5jb206L3NpdGVzL2F0czoiCiAgICAgICAgICB9LAogICAgICAgICAgewogICAgICAgICAgICAibmFtZSI6ICJpdGVtLXBhdGgiLAogICAgICAgICAgICAiaW4iOiAicGF0aCIsCiAgICAgICAgICAgICJyZXF1aXJlZCI6IHRydWUsCiAgICAgICAgICAgICJkZXNjcmlwdGlvbiI6ICJUaGUgYWJzb2x1dGUgcGF0aCB0byB0aGUgZmlsZSBpbnNpZGUgdGhlIGRvY3VtZW50IGxpYnJhcnkgKG11c3Qgc3RhcnQgd2l0aCBhIHNsYXNoKS4iLAogICAgICAgICAgICAic2NoZW1hIjogewogICAgICAgICAgICAgICJ0eXBlIjogInN0cmluZyIKICAgICAgICAgICAgfSwKICAgICAgICAgICAgImV4YW1wbGUiOiAiL1NoYXJlZCBEb2N1bWVudHMvRG9jdW1lbnQuZG9jeCIKICAgICAgICAgIH0KICAgICAgICBdLAogICAgICAgICJzZWN1cml0eSI6IFsKICAgICAgICAgIHsKICAgICAgICAgICAgIkJlYXJlckF1dGgiOiBbXQogICAgICAgICAgfQogICAgICAgIF0sCiAgICAgICAgInJlc3BvbnNlcyI6IHsKICAgICAgICAgICIyMDAiOiB7CiAgICAgICAgICAgICJkZXNjcmlwdGlvbiI6ICJGaWxlIHN0cmVhbSByZXR1cm5lZCBzdWNjZXNzZnVsbHkuIiwKICAgICAgICAgICAgImNvbnRlbnQiOiB7CiAgICAgICAgICAgICAgImFwcGxpY2F0aW9uL29jdGV0LXN0cmVhbSI6IHsKICAgICAgICAgICAgICAgICJzY2hlbWEiOiB7CiAgICAgICAgICAgICAgICAgICJ0eXBlIjogInN0cmluZyIsCiAgICAgICAgICAgICAgICAgICJmb3JtYXQiOiAiYmluYXJ5IgogICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgIH0KICAgICAgICAgICAgfQogICAgICAgICAgfSwKICAgICAgICAgICIzMDIiOiB7CiAgICAgICAgICAgICJkZXNjcmlwdGlvbiI6ICJSZWRpcmVjdCBsb2NhdGlvbiB0byB0aGUgZG93bmxvYWQgc3RyZWFtIFVSTC4iCiAgICAgICAgICB9LAogICAgICAgICAgIjQwMSI6IHsKICAgICAgICAgICAgImRlc2NyaXB0aW9uIjogIlVuYXV0aG9yaXplZC4gTWlzc2luZyBvciBpbnZhbGlkIEJlYXJlciBhY2Nlc3MgdG9rZW4uIgogICAgICAgICAgfSwKICAgICAgICAgICI0MDQiOiB7CiAgICAgICAgICAgICJkZXNjcmlwdGlvbiI6ICJGaWxlIG9yIHNpdGUgcGF0aCBub3QgZm91bmQuIgogICAgICAgICAgfQogICAgICAgIH0KICAgICAgfQogICAgfQogIH0sCiAgImNvbXBvbmVudHMiOiB7CiAgICAic2VjdXJpdHlTY2hlbWVzIjogewogICAgICAiQmVhcmVyQXV0aCI6IHsKICAgICAgICAidHlwZSI6ICJodHRwIiwKICAgICAgICAic2NoZW1lIjogImJlYXJlciIsCiAgICAgICAgImJlYXJlckZvcm1hdCI6ICJKV1QiCiAgICAgIH0KICAgIH0KICB9Cn0=",
+      "version": "1.0.0"
+    },
+    "cb218297": {
+      "id": "cb218297",
+      "name": "fetchDocumentDetails",
+      "type": "OpenAPI",
+      "content": "ewogICJvcGVuYXBpIjogIjMuMC4zIiwKICAiaW5mbyI6IHsKICAgICJ0aXRsZSI6ICJNaWNyb3NvZnQgR3JhcGggU2hhcmVQb2ludCBGaWxlIERvd25sb2FkIEFQSSIsCiAgICAiZGVzY3JpcHRpb24iOiAiQVBJIGVuZHBvaW50IHRvIGRvd25sb2FkIGJpbmFyeSBmaWxlIGNvbnRlbnQgZnJvbSBhIFNoYXJlUG9pbnQgZG9jdW1lbnQgbGlicmFyeSBzaXRlLiIsCiAgICAidmVyc2lvbiI6ICIxLjAuMCIKICB9LAogICJzZXJ2ZXJzIjogWwogICAgewogICAgICAidXJsIjogImh0dHBzOi8vZ3JhcGgubWljcm9zb2Z0LmNvbS92MS4wIgogICAgfQogIF0sCiAgInBhdGhzIjogewogICAgIi9zaXRlcy97c2l0ZS1pZH0vZHJpdmUvcm9vdDp7aXRlbS1wYXRofSI6IHsKICAgICAgImdldCI6IHsKICAgICAgICAic3VtbWFyeSI6ICJGZXRjaCBmaWxlIGRldGFpbHMiLAogICAgICAgICJkZXNjcmlwdGlvbiI6ICJSZXRyaWV2ZXMgdGhlIG1ldGFkYXRhIG9mIGEgc3BlY2lmaWMgZmlsZSBzdG9yZWQgaW4gU2hhcmVQb2ludC4iLAogICAgICAgICJwYXJhbWV0ZXJzIjogWwogICAgICAgICAgewogICAgICAgICAgICAibmFtZSI6ICJzaXRlLWlkIiwKICAgICAgICAgICAgImluIjogInBhdGgiLAogICAgICAgICAgICAicmVxdWlyZWQiOiB0cnVlLAogICAgICAgICAgICAiZGVzY3JpcHRpb24iOiAiVGhlIFNoYXJlUG9pbnQgc2l0ZSBpZGVudGlmaWVyIG9yIGhvc3RuYW1lIHBhdGggY29tYm8gKGUuZy4sIGpicmFuZHNtYS5zaGFyZXBvaW50LmNvbTovc2l0ZXMvYXRzOikiLAogICAgICAgICAgICAic2NoZW1hIjogewogICAgICAgICAgICAgICJ0eXBlIjogInN0cmluZyIKICAgICAgICAgICAgfSwKICAgICAgICAgICAgImV4YW1wbGUiOiAiamJyYW5kc21hLnNoYXJlcG9pbnQuY29tOi9zaXRlcy9hdHM6IgogICAgICAgICAgfSwKICAgICAgICAgIHsKICAgICAgICAgICAgIm5hbWUiOiAiaXRlbS1wYXRoIiwKICAgICAgICAgICAgImluIjogInBhdGgiLAogICAgICAgICAgICAicmVxdWlyZWQiOiB0cnVlLAogICAgICAgICAgICAiZGVzY3JpcHRpb24iOiAiVGhlIGFic29sdXRlIHBhdGggdG8gdGhlIGZpbGUgaW5zaWRlIHRoZSBkb2N1bWVudCBsaWJyYXJ5IChtdXN0IHN0YXJ0IHdpdGggYSBzbGFzaCkuIiwKICAgICAgICAgICAgInNjaGVtYSI6IHsKICAgICAgICAgICAgICAidHlwZSI6ICJzdHJpbmciCiAgICAgICAgICAgIH0sCiAgICAgICAgICAgICJleGFtcGxlIjogIi9TaGFyZWQgRG9jdW1lbnRzL0RvY3VtZW50LmRvY3giCiAgICAgICAgICB9CiAgICAgICAgXSwKICAgICAgICAic2VjdXJpdHkiOiBbCiAgICAgICAgICB7CiAgICAgICAgICAgICJCZWFyZXJBdXRoIjogW10KICAgICAgICAgIH0KICAgICAgICBdLAogICAgICAgICJyZXNwb25zZXMiOiB7CiAgICAgICAgICAiMjAwIjogewogICAgICAgICAgICAiZGVzY3JpcHRpb24iOiAiRmlsZSBkZXRhaWxzIHJldHVybmVkIHN1Y2Nlc3NmdWxseS4iLAogICAgICAgICAgICAiY29udGVudCI6IHsKICAgICAgICAgICAgICAiYXBwbGljYXRpb24vanNvbiI6IHsKICAgICAgICAgICAgICAgICJzY2hlbWEiOiB7CiAgICAgICAgICAgICAgICAgICJ0eXBlIjogIm9iamVjdCIKICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICB9CiAgICAgICAgICAgIH0KICAgICAgICAgIH0sCiAgICAgICAgICAiMzAyIjogewogICAgICAgICAgICAiZGVzY3JpcHRpb24iOiAiUmVkaXJlY3QgbG9jYXRpb24gdG8gdGhlIGRvd25sb2FkIHN0cmVhbSBVUkwuIgogICAgICAgICAgfSwKICAgICAgICAgICI0MDEiOiB7CiAgICAgICAgICAgICJkZXNjcmlwdGlvbiI6ICJVbmF1dGhvcml6ZWQuIE1pc3Npbmcgb3IgaW52YWxpZCBCZWFyZXIgYWNjZXNzIHRva2VuLiIKICAgICAgICAgIH0sCiAgICAgICAgICAiNDA0IjogewogICAgICAgICAgICAiZGVzY3JpcHRpb24iOiAiRmlsZSBvciBzaXRlIHBhdGggbm90IGZvdW5kLiIKICAgICAgICAgIH0KICAgICAgICB9CiAgICAgIH0KICAgIH0KICB9LAogICJjb21wb25lbnRzIjogewogICAgInNlY3VyaXR5U2NoZW1lcyI6IHsKICAgICAgIkJlYXJlckF1dGgiOiB7CiAgICAgICAgInR5cGUiOiAiaHR0cCIsCiAgICAgICAgInNjaGVtZSI6ICJiZWFyZXIiLAogICAgICAgICJiZWFyZXJGb3JtYXQiOiAiSldUIgogICAgICB9CiAgICB9CiAgfQp9",
+      "version": "1.0.0"
+    },
+    "02661cb4": {
+      "id": "02661cb4",
+      "name": "Trigger",
+      "type": "OpenAPI",
+      "content": "ewogICJzd2FnZ2VyIjogIjIuMCIsCiAgImluZm8iOiB7CiAgICAidGl0bGUiOiAiU2hhcmVQb2ludCBGaWxlIFByb2Nlc3NvciBBUEkiLAogICAgImRlc2NyaXB0aW9uIjogIkFQSSBkZWZpbml0aW9uIHRvIGhhbmRsZSBtb2RpZmllZCBvciBjcmVhdGVkIGZpbGVzIGZyb20gU2hhcmVQb2ludCBPbmxpbmUgdHJpZ2dlcnMuIiwKICAgICJ2ZXJzaW9uIjogIjEuMC4wIgogIH0sCiAgImhvc3QiOiAiNWg4a3N4bG0tOTk5OS5ldXcuZGV2dHVubmVscy5tcyIsCiAgImJhc2VQYXRoIjogIi9zaGFyZXBvaW50IiwKICAic2NoZW1lcyI6IFsKICAgICJodHRwcyIKICBdLAogICJwYXRocyI6IHsKICAgICIvZmV0Y2gtZmlsZSI6IHsKICAgICAgInBvc3QiOiB7CiAgICAgICAgInN1bW1hcnkiOiAiUHJvY2VzcyBNb2RpZmllZCBvciBDcmVhdGVkIFNoYXJlUG9pbnQgRmlsZSIsCiAgICAgICAgImRlc2NyaXB0aW9uIjogIlJlY2VpdmVzIFNoYXJlUG9pbnQgbWV0YWRhdGEgdG8gZmV0Y2ggb3IgcHJvY2VzcyB0aGUgdXBkYXRlZCBvciBjcmVhdGVkIGZpbGUuIiwKICAgICAgICAib3BlcmF0aW9uSWQiOiAiRmV0Y2hTaGFyZVBvaW50RmlsZSIsCiAgICAgICAgImNvbnN1bWVzIjogWwogICAgICAgICAgImFwcGxpY2F0aW9uL2pzb24iCiAgICAgICAgXSwKICAgICAgICAicHJvZHVjZXMiOiBbCiAgICAgICAgICAiYXBwbGljYXRpb24vanNvbiIKICAgICAgICBdLAogICAgICAgICJwYXJhbWV0ZXJzIjogWwogICAgICAgICAgewogICAgICAgICAgICAibmFtZSI6ICJib2R5IiwKICAgICAgICAgICAgImluIjogImJvZHkiLAogICAgICAgICAgICAicmVxdWlyZWQiOiB0cnVlLAogICAgICAgICAgICAiZGVzY3JpcHRpb24iOiAiRmlsZSBldmVudCBtZXRhZGF0YSBmcm9tIFNoYXJlUG9pbnQgdHJpZ2dlciIsCiAgICAgICAgICAgICJzY2hlbWEiOiB7CiAgICAgICAgICAgICAgInR5cGUiOiAib2JqZWN0IiwKICAgICAgICAgICAgICAicmVxdWlyZWQiOiBbCiAgICAgICAgICAgICAgICAiY3JlYXRlZFRpbWUiLAogICAgICAgICAgICAgICAgImV2ZW50VHlwZSIsCiAgICAgICAgICAgICAgICAiZmlsZUlkIiwKICAgICAgICAgICAgICAgICJmaWxlTGluayIsCiAgICAgICAgICAgICAgICAiZmlsZU5hbWUiLAogICAgICAgICAgICAgICAgImZpbGVQYXRoIiwKICAgICAgICAgICAgICAgICJtb2RpZmllZFRpbWUiCiAgICAgICAgICAgICAgXSwKICAgICAgICAgICAgICAicHJvcGVydGllcyI6IHsKICAgICAgICAgICAgICAgICJjcmVhdGVkVGltZSI6IHsKICAgICAgICAgICAgICAgICAgInR5cGUiOiAic3RyaW5nIiwKICAgICAgICAgICAgICAgICAgImZvcm1hdCI6ICJkYXRlLXRpbWUiLAogICAgICAgICAgICAgICAgICAiZGVzY3JpcHRpb24iOiAiVGltZXN0YW1wIHdoZW4gdGhlIGZpbGUgd2FzIGNyZWF0ZWQiCiAgICAgICAgICAgICAgICB9LAogICAgICAgICAgICAgICAgImV2ZW50VHlwZSI6IHsKICAgICAgICAgICAgICAgICAgInR5cGUiOiAic3RyaW5nIiwKICAgICAgICAgICAgICAgICAgImVudW0iOiBbCiAgICAgICAgICAgICAgICAgICAgIkNSRUFURUQiLAogICAgICAgICAgICAgICAgICAgICJNT0RJRklFRCIKICAgICAgICAgICAgICAgICAgXSwKICAgICAgICAgICAgICAgICAgImRlc2NyaXB0aW9uIjogIlR5cGUgb2YgZXZlbnQgdGhhdCB0cmlnZ2VyZWQgdGhlIHBheWxvYWQiCiAgICAgICAgICAgICAgICB9LAogICAgICAgICAgICAgICAgImZpbGVJZCI6IHsKICAgICAgICAgICAgICAgICAgInR5cGUiOiAiaW50ZWdlciIsCiAgICAgICAgICAgICAgICAgICJkZXNjcmlwdGlvbiI6ICJUaGUgaW50ZXJuYWwgaXRlbSBJRCBvZiB0aGUgZmlsZSBpbiBTaGFyZVBvaW50IgogICAgICAgICAgICAgICAgfSwKICAgICAgICAgICAgICAgICJmaWxlTGluayI6IHsKICAgICAgICAgICAgICAgICAgInR5cGUiOiAic3RyaW5nIiwKICAgICAgICAgICAgICAgICAgImZvcm1hdCI6ICJ1cmkiLAogICAgICAgICAgICAgICAgICAiZGVzY3JpcHRpb24iOiAiRGlyZWN0IHdlYiBsaW5rIHRvIGFjY2VzcyB0aGUgZmlsZSIKICAgICAgICAgICAgICAgIH0sCiAgICAgICAgICAgICAgICAiZmlsZU5hbWUiOiB7CiAgICAgICAgICAgICAgICAgICJ0eXBlIjogInN0cmluZyIsCiAgICAgICAgICAgICAgICAgICJkZXNjcmlwdGlvbiI6ICJUaGUgbmFtZSB3aXRoIGV4dGVuc2lvbiBvZiB0aGUgZmlsZSAoZS5nLiwgRG9jdW1lbnQuZG9jeCkiCiAgICAgICAgICAgICAgICB9LAogICAgICAgICAgICAgICAgImZpbGVQYXRoIjogewogICAgICAgICAgICAgICAgICAidHlwZSI6ICJzdHJpbmciLAogICAgICAgICAgICAgICAgICAiZGVzY3JpcHRpb24iOiAiVGhlIGZ1bGwgcGF0aCBvZiB0aGUgZmlsZSBpbiBTaGFyZVBvaW50IgogICAgICAgICAgICAgICAgfSwKICAgICAgICAgICAgICAgICJtb2RpZmllZFRpbWUiOiB7CiAgICAgICAgICAgICAgICAgICJ0eXBlIjogInN0cmluZyIsCiAgICAgICAgICAgICAgICAgICJmb3JtYXQiOiAiZGF0ZS10aW1lIiwKICAgICAgICAgICAgICAgICAgImRlc2NyaXB0aW9uIjogIlRpbWVzdGFtcCB3aGVuIHRoZSBmaWxlIHdhcyBsYXN0IG1vZGlmaWVkIgogICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgIH0KICAgICAgICAgICAgfQogICAgICAgICAgfQogICAgICAgIF0sCiAgICAgICAgInJlc3BvbnNlcyI6IHsKICAgICAgICAgICIyMDAiOiB7CiAgICAgICAgICAgICJkZXNjcmlwdGlvbiI6ICJGaWxlIHN1Y2Nlc3NmdWxseSByZWNlaXZlZCBhbmQgcHJvY2Vzc2VkIGJ5IHRoZSB3ZWIgc2VydmljZS4iCiAgICAgICAgICB9LAogICAgICAgICAgIjQwMCI6IHsKICAgICAgICAgICAgImRlc2NyaXB0aW9uIjogIkludmFsaWQgaW5wdXQgcGFyYW1ldGVycy4iCiAgICAgICAgICB9CiAgICAgICAgfQogICAgICB9CiAgICB9CiAgfQp9",
+      "version": "1.0.0"
+    },
+    "3c3b6636": {
+      "id": "3c3b6636",
+      "name": "Devtrigger",
+      "type": "OpenAPI",
+      "content": "ewogICJzd2FnZ2VyIjogIjIuMCIsCiAgImluZm8iOiB7CiAgICAidGl0bGUiOiAiU2hhcmVQb2ludCBGaWxlIFByb2Nlc3NvciBBUEkiLAogICAgImRlc2NyaXB0aW9uIjogIkFQSSBkZWZpbml0aW9uIHRvIGhhbmRsZSBtb2RpZmllZCBvciBjcmVhdGVkIGZpbGVzIGZyb20gU2hhcmVQb2ludCBPbmxpbmUgdHJpZ2dlcnMuIiwKICAgICJ2ZXJzaW9uIjogIjEuMC4wIgogIH0sCiAgImhvc3QiOiAiNWg4a3N4bG0tOTk5OS5ldXcuZGV2dHVubmVscy5tcyIsCiAgImJhc2VQYXRoIjogIi9zaGFyZXBvaW50IiwKICAic2NoZW1lcyI6IFsKICAgICJodHRwcyIKICBdLAogICJwYXRocyI6IHsKICAgICIvZmV0Y2gtZmlsZS1kZXYiOiB7CiAgICAgICJwb3N0IjogewogICAgICAgICJzdW1tYXJ5IjogIlByb2Nlc3MgTW9kaWZpZWQgb3IgQ3JlYXRlZCBTaGFyZVBvaW50IEZpbGUiLAogICAgICAgICJkZXNjcmlwdGlvbiI6ICJSZWNlaXZlcyBTaGFyZVBvaW50IG1ldGFkYXRhIHRvIGZldGNoIG9yIHByb2Nlc3MgdGhlIHVwZGF0ZWQgb3IgY3JlYXRlZCBmaWxlLiIsCiAgICAgICAgIm9wZXJhdGlvbklkIjogIkZldGNoU2hhcmVQb2ludEZpbGUiLAogICAgICAgICJjb25zdW1lcyI6IFsKICAgICAgICAgICJhcHBsaWNhdGlvbi9qc29uIgogICAgICAgIF0sCiAgICAgICAgInByb2R1Y2VzIjogWwogICAgICAgICAgImFwcGxpY2F0aW9uL2pzb24iCiAgICAgICAgXSwKICAgICAgICAicGFyYW1ldGVycyI6IFsKICAgICAgICAgIHsKICAgICAgICAgICAgIm5hbWUiOiAiYm9keSIsCiAgICAgICAgICAgICJpbiI6ICJib2R5IiwKICAgICAgICAgICAgInJlcXVpcmVkIjogdHJ1ZSwKICAgICAgICAgICAgImRlc2NyaXB0aW9uIjogIkZpbGUgZXZlbnQgbWV0YWRhdGEgZnJvbSBTaGFyZVBvaW50IHRyaWdnZXIiLAogICAgICAgICAgICAic2NoZW1hIjogewogICAgICAgICAgICAgICJ0eXBlIjogIm9iamVjdCIsCiAgICAgICAgICAgICAgInJlcXVpcmVkIjogWwogICAgICAgICAgICAgICAgImNyZWF0ZWRUaW1lIiwKICAgICAgICAgICAgICAgICJldmVudFR5cGUiLAogICAgICAgICAgICAgICAgImZpbGVJZCIsCiAgICAgICAgICAgICAgICAiZmlsZUxpbmsiLAogICAgICAgICAgICAgICAgImZpbGVOYW1lIiwKICAgICAgICAgICAgICAgICJmaWxlUGF0aCIsCiAgICAgICAgICAgICAgICAibW9kaWZpZWRUaW1lIgogICAgICAgICAgICAgIF0sCiAgICAgICAgICAgICAgInByb3BlcnRpZXMiOiB7CiAgICAgICAgICAgICAgICAiY3JlYXRlZFRpbWUiOiB7CiAgICAgICAgICAgICAgICAgICJ0eXBlIjogInN0cmluZyIsCiAgICAgICAgICAgICAgICAgICJmb3JtYXQiOiAiZGF0ZS10aW1lIiwKICAgICAgICAgICAgICAgICAgImRlc2NyaXB0aW9uIjogIlRpbWVzdGFtcCB3aGVuIHRoZSBmaWxlIHdhcyBjcmVhdGVkIgogICAgICAgICAgICAgICAgfSwKICAgICAgICAgICAgICAgICJldmVudFR5cGUiOiB7CiAgICAgICAgICAgICAgICAgICJ0eXBlIjogInN0cmluZyIsCiAgICAgICAgICAgICAgICAgICJlbnVtIjogWwogICAgICAgICAgICAgICAgICAgICJDUkVBVEVEIiwKICAgICAgICAgICAgICAgICAgICAiTU9ESUZJRUQiCiAgICAgICAgICAgICAgICAgIF0sCiAgICAgICAgICAgICAgICAgICJkZXNjcmlwdGlvbiI6ICJUeXBlIG9mIGV2ZW50IHRoYXQgdHJpZ2dlcmVkIHRoZSBwYXlsb2FkIgogICAgICAgICAgICAgICAgfSwKICAgICAgICAgICAgICAgICJmaWxlSWQiOiB7CiAgICAgICAgICAgICAgICAgICJ0eXBlIjogImludGVnZXIiLAogICAgICAgICAgICAgICAgICAiZGVzY3JpcHRpb24iOiAiVGhlIGludGVybmFsIGl0ZW0gSUQgb2YgdGhlIGZpbGUgaW4gU2hhcmVQb2ludCIKICAgICAgICAgICAgICAgIH0sCiAgICAgICAgICAgICAgICAiZmlsZUxpbmsiOiB7CiAgICAgICAgICAgICAgICAgICJ0eXBlIjogInN0cmluZyIsCiAgICAgICAgICAgICAgICAgICJmb3JtYXQiOiAidXJpIiwKICAgICAgICAgICAgICAgICAgImRlc2NyaXB0aW9uIjogIkRpcmVjdCB3ZWIgbGluayB0byBhY2Nlc3MgdGhlIGZpbGUiCiAgICAgICAgICAgICAgICB9LAogICAgICAgICAgICAgICAgImZpbGVOYW1lIjogewogICAgICAgICAgICAgICAgICAidHlwZSI6ICJzdHJpbmciLAogICAgICAgICAgICAgICAgICAiZGVzY3JpcHRpb24iOiAiVGhlIG5hbWUgd2l0aCBleHRlbnNpb24gb2YgdGhlIGZpbGUgKGUuZy4sIERvY3VtZW50LmRvY3gpIgogICAgICAgICAgICAgICAgfSwKICAgICAgICAgICAgICAgICJmaWxlUGF0aCI6IHsKICAgICAgICAgICAgICAgICAgInR5cGUiOiAic3RyaW5nIiwKICAgICAgICAgICAgICAgICAgImRlc2NyaXB0aW9uIjogIlRoZSBmdWxsIHBhdGggb2YgdGhlIGZpbGUgaW4gU2hhcmVQb2ludCIKICAgICAgICAgICAgICAgIH0sCiAgICAgICAgICAgICAgICAibW9kaWZpZWRUaW1lIjogewogICAgICAgICAgICAgICAgICAidHlwZSI6ICJzdHJpbmciLAogICAgICAgICAgICAgICAgICAiZm9ybWF0IjogImRhdGUtdGltZSIsCiAgICAgICAgICAgICAgICAgICJkZXNjcmlwdGlvbiI6ICJUaW1lc3RhbXAgd2hlbiB0aGUgZmlsZSB3YXMgbGFzdCBtb2RpZmllZCIKICAgICAgICAgICAgICAgIH0KICAgICAgICAgICAgICB9CiAgICAgICAgICAgIH0KICAgICAgICAgIH0KICAgICAgICBdLAogICAgICAgICJyZXNwb25zZXMiOiB7CiAgICAgICAgICAiMjAwIjogewogICAgICAgICAgICAiZGVzY3JpcHRpb24iOiAiRmlsZSBzdWNjZXNzZnVsbHkgcmVjZWl2ZWQgYW5kIHByb2Nlc3NlZCBieSB0aGUgd2ViIHNlcnZpY2UuIgogICAgICAgICAgfSwKICAgICAgICAgICI0MDAiOiB7CiAgICAgICAgICAgICJkZXNjcmlwdGlvbiI6ICJJbnZhbGlkIGlucHV0IHBhcmFtZXRlcnMuIgogICAgICAgICAgfQogICAgICAgIH0KICAgICAgfQogICAgfQogIH0KfQ==",
+      "version": "1.0.0"
+    }
+  },
+  "connections": {
+    "399d3330-b60f-46f4-8f8d-1c8b2ed973c6": {
+      "id": "399d3330-b60f-46f4-8f8d-1c8b2ed973c6",
+      "name": "AS-VectorDB",
+      "ref": "#as",
+      "isGlobal": false,
+      "settings": {
+        "name": "AS-VectorDB",
+        "description": "",
+        "gridUrl": "=$property[\"ActiveSpaces.AS-VectorDB.Grid_URL\"]",
+        "useTrustFile": false,
+        "trustFile": "",
+        "gridName": "=$property[\"ActiveSpaces.AS-VectorDB.Grid_Name\"]",
+        "username": "=$property[\"ActiveSpaces.AS-VectorDB.Username\"]",
+        "password": "=$property[\"ActiveSpaces.AS-VectorDB.Password\"]"
+      }
+    },
+    "e7a79509-003b-45c6-acb2-2816db8c4029": {
+      "id": "e7a79509-003b-45c6-acb2-2816db8c4029",
+      "name": "CP-EMS15dev",
+      "ref": "#ems",
+      "isGlobal": false,
+      "settings": {
+        "name": "CP-EMS15dev",
+        "description": "ATS Platform EMS server",
+        "connectionFactoryType": "Direct",
+        "serverUrl": "=$property[\"EMS.CP-EMS15dev.Server_URL\"]",
+        "factoryName": "",
+        "factoryUsername": "",
+        "factoryPassword": "",
+        "factorySslPassword": "",
+        "authenticationMode": "None",
+        "userName": "=$property[\"EMS.CP-EMS15dev.User_Name\"]",
+        "password": "=$property[\"EMS.CP-EMS15dev.Password\"]",
+        "clientID": "=$property[\"EMS.CP-EMS15dev.Client_ID\"]",
+        "enablemTLS": true,
+        "clientCert": "",
+        "clientKey": "",
+        "caCert": "",
+        "privateKeyPassword": "",
+        "noVerifyHostname": true,
+        "reconnectCount": "=$property[\"EMS.CP-EMS15dev.Reconnect_Count\"]",
+        "reconnectDelay": "=$property[\"EMS.CP-EMS15dev.Reconnect_Delay\"]",
+        "reconnectTimeout": "=$property[\"EMS.CP-EMS15dev.Retry_Timeout\"]"
+      }
+    }
+  },
+  "contrib": "W3sicmVmIjoiZ2l0aHViLmNvbS90aWJjby9mbG9nby1tY3Avc3JjL2FwcC9NQ1AiLCJpZCI6Ik1DUCIsInZlcnNpb24iOiIxLjAuNCIsInRhZyI6IjEuMC40LWIwMiIsIm5hbWUiOiJNb2RlbCBDb250ZXh0IFByb3RvY29sIChNQ1ApIiwiczNsb2NhdGlvbiI6IlRpYmNvL01DUCIsImlzVXNlckV4dGVuc2lvbiI6ZmFsc2V9LHsicmVmIjoiZ2l0aHViLmNvbS90aWJjby9mbG9nby1haS1hZ2VudC9zcmMvYXBwL0FnZW50aWNBSSIsImlkIjoiQWdlbnRpY0FJIiwidmVyc2lvbiI6IjAuOS41IiwidGFnIjoiMC45LjUtYjA5LXdpcC1lbWJlZGRpbmdzLWFjdGl2aXR5IiwibmFtZSI6IkFnZW50aWMgQUkgKFRlY2ggUHJldmlldykiLCJzM2xvY2F0aW9uIjoiVGliY28vQWdlbnRpY0FJIiwiaXNVc2VyRXh0ZW5zaW9uIjpmYWxzZX0seyJyZWYiOiJnaXRodWIuY29tL3RpYmNvL2Zsb2dvLWFjdGl2ZXNwYWNlcy9zcmMvYXBwL0FjdGl2ZVNwYWNlcyIsImlkIjoiQWN0aXZlU3BhY2VzIiwidmVyc2lvbiI6IjEuMS4wIiwidGFnIjoiMS4xLjAtYjA4LWZndGFzLTIzIiwibmFtZSI6IlRJQkNPIEFjdGl2ZVNwYWNlcyIsInMzbG9jYXRpb24iOiJUaWJjby9BY3RpdmVTcGFjZXMiLCJpc1VzZXJFeHRlbnNpb24iOmZhbHNlfSx7InJlZiI6ImdpdGh1Yi5jb20vdGliY28vZmxvZ28tZ2VuZXJhbC9zcmMvYXBwL0dlbmVyYWwiLCJpZCI6IkdlbmVyYWwiLCJ2ZXJzaW9uIjoiMS42LjE3IiwidGFnIjoiMS42LjE3LWIwMiIsIm5hbWUiOiJHZW5lcmFsIiwiczNsb2NhdGlvbiI6IlRpYmNvL0dlbmVyYWwiLCJpc1VzZXJFeHRlbnNpb24iOmZhbHNlfSx7InJlZiI6ImdpdGh1Yi5jb20vdGliY28vZmxvZ28tZW1zL3NyYy9hcHAvRU1TIiwiaWQiOiJFTVMiLCJ2ZXJzaW9uIjoiMS4wLjQiLCJ0YWciOiIxLjAuNC1iMDEiLCJuYW1lIjoiVElCQ08gRW50ZXJwcmlzZSBNZXNzYWdlIFNlcnZpY2UiLCJzM2xvY2F0aW9uIjoiVGliY28vRU1TIiwiaXNVc2VyRXh0ZW5zaW9uIjpmYWxzZX1d",
+  "metadata": {
+    "endpoints": [
+      {
+        "protocol": "http",
+        "port": "19091",
+        "spec": {
+          "name": "RAGdemo",
+          "version": "1.0.0"
+        },
+        "title": "ReceiveHTTPMessage",
+        "swagger": {
+          "swagger": "2.0",
+          "info": {
+            "title": "RAGdemo",
+            "version": "1.0.0",
+            "description": "Simple REST Trigger"
+          },
+          "paths": {
+            "/fetch-file": {
+              "post": {
+                "summary": "PublishFileTriggerMessage",
+                "operationId": "post_fetch-file",
+                "parameters": [
+                  {
+                    "name": "Authorization",
+                    "in": "header",
+                    "description": "Request parameter",
+                    "required": false,
+                    "type": "string"
+                  },
+                  {
+                    "name": "body",
+                    "in": "body",
+                    "description": "request body parameter",
+                    "required": true,
+                    "schema": {
+                      "$ref": "#/definitions/schema1"
+                    }
+                  }
+                ],
+                "responses": {
+                  "200": {
+                    "description": "Rest Response",
+                    "schema": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "description": "DEV Tool to manually publish new/changed file notification on EMS",
+                "consumes": [
+                  "application/json"
+                ]
+              }
+            }
+          },
+          "definitions": {
+            "schema1": {
+              "type": "object",
+              "required": [
+                "createdTime",
+                "eventType",
+                "fileId",
+                "fileLink",
+                "fileName",
+                "filePath",
+                "modifiedTime"
+              ],
+              "properties": {
+                "createdTime": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Timestamp when the file was created"
+                },
+                "eventType": {
+                  "type": "string",
+                  "enum": [
+                    "CREATED",
+                    "MODIFIED"
+                  ],
+                  "description": "Type of event that triggered the payload"
+                },
+                "fileId": {
+                  "type": "integer",
+                  "description": "The internal item ID of the file in SharePoint"
+                },
+                "fileLink": {
+                  "type": "string",
+                  "format": "uri",
+                  "description": "Direct web link to access the file"
+                },
+                "fileName": {
+                  "type": "string",
+                  "description": "The name with extension of the file (e.g., Document.docx)"
+                },
+                "filePath": {
+                  "type": "string",
+                  "description": "The full path of the file in SharePoint"
+                },
+                "modifiedTime": {
+                  "type": "string",
+                  "format": "date-time",
+                  "description": "Timestamp when the file was last modified"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "protocol": "http",
+        "port": "18081",
+        "title": "MCPServer",
+        "type": "public"
+      }
+    ],
+    "flogoVersion": "2.26.8"
+  }
+}
